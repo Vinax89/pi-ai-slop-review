@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pi.local/ai-slop/scan-result.schema.json",
+  "title": "Pi AI-Slop Scan Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "scanId",
+    "generatedAt",
+    "engine",
+    "engineVersion",
+    "scope",
+    "providers",
+    "evidenceRecords",
+    "scannedFiles",
+    "findings",
+    "suppressedFindings",
+    "policyDecisions",
+    "ruleHealth",
+    "skipped"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "scanId": { "type": "string", "pattern": "^scan:" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "engine": { "enum": ["typescript-semantic", "python-ast", "semantic-review", "provider-federation"] },
+    "engineVersion": { "type": "string" },
+    "scope": {
+      "type": "object",
+      "required": ["mode", "rootHash", "contentHash", "paths"],
+      "properties": {
+        "mode": { "enum": ["session", "explicit", "delta", "repository"] },
+        "rootHash": { "type": "string" },
+        "contentHash": { "type": "string" },
+        "paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "baselineId": { "type": "string" }
+      }
+    },
+    "providers": { "type": "array", "items": { "$ref": "#/$defs/provider" } },
+    "evidenceRecords": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+    "scannedFiles": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "suppressedFindings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "policyDecisions": { "type": "array", "items": { "type": "object" } },
+    "ruleHealth": { "type": "array", "items": { "type": "object" } },
+    "skipped": { "type": "array", "items": { "type": "object", "required": ["filePath", "reason"] } }
+  },
+  "$defs": {
+    "provider": {
+      "type": "object",
+      "required": ["id", "version", "capabilities", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "version": { "type": "string" },
+        "capabilities": { "type": "array", "items": { "type": "string" } },
+        "status": { "enum": ["completed", "degraded", "failed", "skipped"] }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["filePath", "line", "column", "start", "end", "sourceHash"],
+      "properties": {
+        "filePath": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 0 },
+        "sourceHash": { "type": "string" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["schemaVersion", "id", "providerId", "providerVersion", "kind", "summary", "strength"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "id": { "type": "string" },
+        "providerId": { "type": "string" },
+        "providerVersion": { "type": "string" },
+        "kind": { "type": "string" },
+        "summary": { "type": "string" },
+        "strength": { "enum": ["C1", "C2", "C3"] },
+        "source": { "$ref": "#/$defs/source" },
+        "details": { "type": "object" }
+      }
+    },
+    "finding": {
+      "allOf": [
+        { "$ref": "#/$defs/source" },
+        {
+          "type": "object",
+          "required": ["schemaVersion", "id", "anchor", "ruleId", "classification", "confidence", "risk", "maximumAction", "message", "evidence", "evidenceIds", "counterEvidence", "counterEvidenceIds", "unknown"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "id": { "type": "string" },
+            "anchor": { "type": "string" },
+            "ruleId": { "type": "string" },
+            "classification": { "enum": ["defect", "waste_candidate", "context_conflict", "assurance_gap", "review_externality"] },
+            "confidence": { "enum": ["C1", "C2", "C3"] },
+            "risk": { "enum": ["R1", "R2", "R3"] },
+            "maximumAction": { "enum": ["ignore", "observe", "propose", "delegate-safe-fix"] },
+            "message": { "type": "string" },
+            "evidence": { "type": "array", "items": { "type": "string" } },
+            "evidenceIds": { "type": "array", "items": { "type": "string" } },
+            "counterEvidence": { "type": "array", "items": { "type": "string" } },
+            "counterEvidenceIds": { "type": "array", "items": { "type": "string" } },
+            "unknown": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      ]
+    }
+  }
+}

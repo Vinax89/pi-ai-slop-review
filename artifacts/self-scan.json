@@ -1,0 +1,70 @@
+{
+  "generatedAt": "2026-07-23T12:46:44.248Z",
+  "scanId": "scan:017c125dfd80163773cc40d7",
+  "paths": 68,
+  "discoveryTruncated": false,
+  "scanned": 68,
+  "activeFindings": 5,
+  "actionableFindings": 0,
+  "findingsByRule": {
+    "data.hidden-catch-fallback": 2,
+    "errors.suppressed": 3
+  },
+  "findings": [
+    {
+      "filePath": "src/providers/files.ts",
+      "line": 16,
+      "ruleId": "data.hidden-catch-fallback",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause converts failure into a safe-looking return value"
+    },
+    {
+      "filePath": "src/providers/files.ts",
+      "line": 28,
+      "ruleId": "data.hidden-catch-fallback",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause converts failure into a safe-looking return value"
+    },
+    {
+      "filePath": "src/providers/lsp.ts",
+      "line": 131,
+      "ruleId": "errors.suppressed",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause is empty"
+    },
+    {
+      "filePath": "src/providers/lsp.ts",
+      "line": 284,
+      "ruleId": "errors.suppressed",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause is empty"
+    },
+    {
+      "filePath": "src/providers/lsp.ts",
+      "line": 290,
+      "ruleId": "errors.suppressed",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause is empty"
+    }
+  ],
+  "skipped": [],
+  "providerStatuses": [
+    {
+      "id": "typescript-semantic",
+      "status": "completed"
+    },
+    {
+      "id": "python-ast",
+      "status": "completed"
+    },
+    {
+      "id": "repository-graph",
+      "status": "completed"
+    }
+  ]
+}

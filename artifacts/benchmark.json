@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-07-23T12:46:24.543Z",
+  "runtime": "v24.18.0",
+  "fixture": {
+    "files": 40,
+    "findings": 0,
+    "graphResults": 1
+  },
+  "measurements": {
+    "coldScanMs": 1378.95,
+    "warmScanP50Ms": 882.63,
+    "warmScanP95Ms": 892.02,
+    "graphQueryMs": 1.6,
+    "rssHighWaterDeltaMiB": 446.45,
+    "heapUsedDeltaMiB": 2.21
+  },
+  "targets": {
+    "changedFileWarmP95Ms": 2000,
+    "graphQueryP95Ms": 250,
+    "note": "The scan fixture deliberately covers forty files; targets are directional and never override correctness or safety."
+  }
+}

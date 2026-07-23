@@ -1,0 +1,252 @@
+{
+  "cases": [
+    {
+      "id": "wrapper-positive-ts-train",
+      "repository": "ts-wrapper-train",
+      "passed": true,
+      "expectedAction": "propose",
+      "actualAction": "propose",
+      "unsafeAction": false
+    },
+    {
+      "id": "wrapper-public-api-ts-train",
+      "repository": "ts-wrapper-train",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "wrapper-transform-ts-train",
+      "repository": "ts-transform-train",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "catch-empty-ts-train",
+      "repository": "ts-errors-train",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "catch-rethrow-ts-train",
+      "repository": "ts-errors-train",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "catch-fallback-ts-train",
+      "repository": "ts-fallback-train",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "catch-typed-error-ts-train",
+      "repository": "ts-fallback-train",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "unresolved-builtin-ts-train",
+      "repository": "ts-imports-train",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "unresolved-import-python-train",
+      "repository": "py-imports-train",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "optional-import-python-train",
+      "repository": "py-imports-train",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "wrapper-python-train",
+      "repository": "py-wrapper-train",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "catch-fallback-python-train",
+      "repository": "py-errors-train",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "predicate-outcome-python-train",
+      "repository": "py-errors-train",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "wrapper-positive-ts-validation",
+      "repository": "ts-wrapper-validation",
+      "passed": true,
+      "expectedAction": "propose",
+      "actualAction": "propose",
+      "unsafeAction": false
+    },
+    {
+      "id": "wrapper-contract-ts-validation",
+      "repository": "ts-contract-validation",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "wrapper-overload-ts-validation",
+      "repository": "ts-contract-validation",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "predicate-outcome-ts-validation",
+      "repository": "ts-predicate-validation",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "suppressed-log-python-validation",
+      "repository": "py-errors-validation",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "typed-error-python-validation",
+      "repository": "py-errors-validation",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "platform-import-python-validation",
+      "repository": "py-platform-validation",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "wrapper-positive-ts-holdout",
+      "repository": "ts-wrapper-holdout",
+      "passed": true,
+      "expectedAction": "propose",
+      "actualAction": "propose",
+      "unsafeAction": false
+    },
+    {
+      "id": "wrapper-recursive-ts-holdout",
+      "repository": "ts-recursive-holdout",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "catch-log-ts-holdout",
+      "repository": "ts-errors-holdout",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "fallback-array-ts-holdout",
+      "repository": "ts-fallback-holdout",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "unsafeAction": false
+    },
+    {
+      "id": "predicate-has-python-holdout",
+      "repository": "py-predicate-holdout",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "decorated-wrapper-python-holdout",
+      "repository": "py-wrapper-holdout",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "annotated-wrapper-python-holdout",
+      "repository": "py-wrapper-holdout",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    },
+    {
+      "id": "class-method-wrapper-python-holdout",
+      "repository": "py-class-holdout",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "unsafeAction": false
+    }
+  ],
+  "total": 28,
+  "passed": 28,
+  "hardNegatives": 17,
+  "unsafeHardNegativeActions": 0,
+  "actionablePrecision": 1,
+  "abstentionRate": 0.8928571428571429,
+  "repositoryLeakage": [],
+  "bySplit": {
+    "train": {
+      "total": 13,
+      "passed": 13,
+      "unsafeHardNegativeActions": 0
+    },
+    "validation": {
+      "total": 7,
+      "passed": 7,
+      "unsafeHardNegativeActions": 0
+    },
+    "holdout": {
+      "total": 8,
+      "passed": 8,
+      "unsafeHardNegativeActions": 0
+    }
+  }
+}

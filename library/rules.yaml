@@ -1,0 +1,72 @@
+schema_version: 1
+rules:
+  - id: dependency.unresolved
+    scope: artifact
+    classification: defect
+    ai_relation: amplified
+    risk: R2
+    confidence_cap: C3
+    claim: A module specifier cannot be resolved under the active project configuration.
+    vetoes: [runtime-builtin, workspace-alias, optional-platform-import, type-checking-import, ambient-module, declared-dependency]
+    maximum_action: observe
+    sources: [hallucinated-packages-2024]
+
+  - id: structure.pass-through-wrapper
+    scope: artifact
+    classification: waste_candidate
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A function forwards unchanged arguments and may add no behavior or boundary value.
+    vetoes: [public-api, compatibility-alias, decorator, overload, explicit-return-contract, unresolved-target, this-bound-target, dependency-injection-seam, observability-boundary, non-call-reference]
+    maximum_action: propose
+
+  - id: errors.suppressed
+    scope: artifact
+    classification: context_conflict
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A catch clause is empty or only logs before control continues.
+    vetoes: [typed-failure-outcome, outer-retry, intentional-best-effort-boundary]
+    maximum_action: observe
+
+  - id: data.hidden-catch-fallback
+    scope: artifact
+    classification: context_conflict
+    ai_relation: amplified
+    risk: R3
+    confidence_cap: C2
+    claim: A catch clause converts failure into a safe-looking return value.
+    vetoes: [typed-optional-outcome, visible-placeholder, documented-conservative-estimate, test-fixture]
+    maximum_action: observe
+
+  - id: structure.duplicate-capability
+    scope: repository
+    classification: waste_candidate
+    ai_relation: none
+    risk: R2
+    confidence_cap: C1
+    claim: Two functions or classes have the same normalized body and require contextual review.
+    vetoes: [separate-contract, compatibility-boundary, generated-code, test-fixture]
+    maximum_action: observe
+
+  - id: assurance.no-linked-tests
+    scope: repository
+    classification: assurance_gap
+    ai_relation: none
+    risk: R2
+    confidence_cap: C1
+    claim: No static test edge was found for a changed exported symbol.
+    vetoes: [dynamic-test, integration-coverage, external-consumer, coverage-evidence]
+    maximum_action: observe
+
+  - id: architecture.disallowed-dependency
+    scope: repository
+    classification: context_conflict
+    ai_relation: none
+    risk: R3
+    confidence_cap: C2
+    claim: A resolved import crosses a configured architecture boundary that is not allowlisted.
+    vetoes: [documented-waiver, generated-code]
+    maximum_action: observe

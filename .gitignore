@@ -1,0 +1,10 @@
+node_modules/
+*.tgz
+*.log
+__pycache__/
+*.py[cod]
+.ai-slop/
+coverage/
+dist/
+.env*
+!.env.example

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pi.local/ai-slop/config.schema.json",
+  "title": "Pi AI-Slop Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "defaultScope": { "enum": ["session", "delta"] },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "registries": { "type": "array", "items": { "enum": ["npm", "pypi", "openssf"] }, "uniqueItems": true }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trusted": { "type": "boolean" },
+        "commands": { "type": "array", "items": { "type": "string" } },
+        "lspServers": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+        }
+      }
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sarif": { "type": "array", "items": { "type": "string" } },
+        "analyzerReports": { "type": "array", "items": { "$ref": "#/$defs/report" } },
+        "coverageReports": { "type": "array", "items": { "$ref": "#/$defs/report" } }
+      }
+    },
+    "lab": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "criticalPatterns": { "type": "array", "items": { "type": "string" } },
+        "maxPatchBytes": { "type": "integer", "minimum": 1 },
+        "maxCommands": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "testPatterns": { "type": "array", "items": { "type": "string" } },
+        "specPatterns": { "type": "array", "items": { "type": "string" } },
+        "layers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "patterns"],
+            "properties": { "name": { "type": "string" }, "patterns": { "type": "array", "items": { "type": "string" } } }
+          }
+        },
+        "allowedEdges": { "type": "array", "items": { "type": "string", "pattern": "^[^>]+->[^>]+$" } }
+      }
+    },
+    "experiments": { "type": "object", "additionalProperties": { "type": "boolean" } },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["pattern", "kind", "authoritativeFor"],
+            "properties": {
+              "pattern": { "type": "string" },
+              "kind": { "enum": ["build", "format", "lint", "typecheck", "unit-test", "integration-test", "security", "custom"] },
+              "authoritativeFor": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "limits": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } }
+  },
+  "$defs": {
+    "report": {
+      "type": "object",
+      "required": ["kind", "path"],
+      "properties": { "kind": { "type": "string" }, "path": { "type": "string" } }
+    }
+  }
+}

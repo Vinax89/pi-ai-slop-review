@@ -1,0 +1,79 @@
+{
+  "name": "pi-ai-slop-review",
+  "version": "1.0.0",
+  "description": "Evidence-backed review of AI-assisted TypeScript, JavaScript, and Python changes for Pi",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "code-review",
+    "static-analysis"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vinax89/pi-ai-slop-review.git"
+  },
+  "homepage": "https://github.com/Vinax89/pi-ai-slop-review#readme",
+  "bugs": {
+    "url": "https://github.com/Vinax89/pi-ai-slop-review/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "src",
+    "library",
+    "schema",
+    "scripts",
+    "docs",
+    "artifacts",
+    "README.md",
+    "tsconfig.json",
+    "npm-shrinkwrap.json"
+  ],
+  "scripts": {
+    "benchmark": "node --expose-gc --experimental-strip-types src/evaluation/benchmark.ts",
+    "build": "npm run typecheck",
+    "evaluate": "node --experimental-strip-types src/evaluation/cli.ts",
+    "lifecycle": "node scripts/lifecycle.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run build && npm test && npm run evaluate && npm audit --omit=dev"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  }
+}

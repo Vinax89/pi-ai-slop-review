@@ -1,0 +1,85 @@
+schema_version: 1
+sources:
+  - id: why-slop-matters-2026
+    type: peer_reviewed
+    title: Why Slop Matters
+    url: https://arxiv.org/abs/2601.06060
+    supports: [superficial-competence, effort-asymmetry, mass-producibility]
+    limitations: [not-specific-to-software]
+
+  - id: endless-stream-2026
+    type: preprint
+    title: An Endless Stream of AI Slop
+    url: https://arxiv.org/abs/2603.27249
+    supports: [review-friction, quality-degradation, reviewer-cost-externality]
+    limitations: [qualitative-forum-corpus]
+
+  - id: ai-slop-prs-2026
+    type: empirical-report
+    title: What Makes a Pull Request AI Slop?
+    url: https://github.com/sepehr-rs/Characterizing-AI-slop
+    supports: [no-reliable-pr-style-fingerprint]
+    limitations: [low-cross-repository-label-agreement]
+
+  - id: pearce-security-2022
+    type: peer_reviewed
+    title: Asleep at the Keyboard? Assessing the Security of GitHub Copilot's Code Contributions
+    url: https://doi.org/10.1109/SP46214.2022.9833571
+    supports: [generated-code-security-risk]
+    limitations: [model-and-era-specific]
+
+  - id: hallucinated-packages-2024
+    type: preprint
+    title: We Have a Package for You! A Comprehensive Analysis of Package Hallucinations by Code Generating LLMs
+    url: https://arxiv.org/abs/2406.10279
+    supports: [hallucinated-dependency-risk]
+    limitations: [model-and-ecosystem-dependent]
+
+  - id: static-analysis-google-2018
+    type: peer_reviewed
+    title: Lessons from Building Static Analysis Tools at Google
+    url: https://doi.org/10.1145/3188720
+    supports: [explainability, low-false-positive-requirement, workflow-integration]
+    limitations: [single-organization-experience]
+
+  - id: code-property-graph-2014
+    type: peer_reviewed
+    title: Modeling and Discovering Vulnerabilities with Code Property Graphs
+    url: https://doi.org/10.1109/SP.2014.44
+    supports: [syntax-control-data-graph]
+    limitations: [security-focused-evaluation]
+
+  - id: quickcheck-2000
+    type: peer_reviewed
+    title: QuickCheck: A Lightweight Tool for Random Testing of Haskell Programs
+    url: https://doi.org/10.1145/357766.351266
+    supports: [property-based-testing]
+    limitations: [properties-and-generators-remain-human-contracts]
+
+  - id: mutation-survey-2011
+    type: peer_reviewed
+    title: An Analysis and Survey of the Development of Mutation Testing
+    url: https://doi.org/10.1109/TSE.2010.62
+    supports: [mutation-testing, test-strength-assessment]
+    limitations: [equivalent-mutants, computational-cost]
+
+  - id: alive2-2021
+    type: peer_reviewed
+    title: Alive2: Bounded Translation Validation for LLVM
+    url: https://doi.org/10.1145/3453483.3454030
+    supports: [bounded-translation-validation]
+    limitations: [llvm-model-and-bounds]
+
+  - id: egg-2021
+    type: peer_reviewed
+    title: egg: Fast and Extensible Equality Saturation
+    url: https://doi.org/10.1145/3434304
+    supports: [equality-saturation]
+    limitations: [rewrite-soundness-and-effect-model-required]
+
+  - id: abstention-2021
+    type: peer_reviewed
+    title: The Art of Abstention: Selective Prediction and Error Regularization for Natural Language Processing
+    url: https://doi.org/10.18653/v1/2021.acl-long.84
+    supports: [selective-prediction, abstention]
+    limitations: [not-specific-to-static-analysis]
