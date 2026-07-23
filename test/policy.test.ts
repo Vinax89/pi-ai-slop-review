@@ -65,6 +65,8 @@ test("executable rule policies are loaded from the evidence library", () => {
   assert.equal(policies.get("structure.pass-through-wrapper")?.maximumAction, "propose");
   assert.equal(policies.get("data.hidden-catch-fallback")?.risk, "R3");
   assert.equal(policies.get("architecture.disallowed-dependency")?.confidenceCap, "C2");
+  assert.match(policies.get("structure.pass-through-wrapper")?.remediationSteps.join(" ") ?? "", /callers/);
+  assert.match(policies.get("data.hidden-catch-fallback")?.verificationSteps.join(" ") ?? "", /failure path/);
 });
 
 test("policy preserves eligible proposals but caps unregistered rules", () => {

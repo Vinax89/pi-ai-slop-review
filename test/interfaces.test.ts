@@ -8,8 +8,9 @@ import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.ts";
 import { discoverRepositoryFiles } from "../src/core/discovery.ts";
 import { createScanResult, isScanResult } from "../src/core/schema.ts";
 import { diagnose } from "../src/diagnostics.ts";
-import { toSarif, writeExport } from "../src/export.ts";
+import { toMarkdown, toSarif, writeExport } from "../src/export.ts";
 import { importSarif } from "../src/providers/sarif.ts";
+import { formatReport } from "../src/report.ts";
 import type { FindingDraft } from "../src/types.ts";
 
 function fixture(): string {
@@ -38,6 +39,10 @@ function finding(): FindingDraft {
     unknown: [],
   };
 }
+
+test("repository audits default to a 10,000-file ceiling", () => {
+  assert.equal(DEFAULT_CONFIG.limits.maxFiles, 10_000);
+});
 
 test("repository discovery is explicit, bounded, and ignores symlinked or generated dependency trees", () => {
   const root = fixture();
@@ -73,11 +78,73 @@ test("JSON and SARIF exports are schema-shaped, atomic, and SARIF-importable", (
   assert.equal(sarif.version, "2.1.0");
   assert.equal(sarif.runs[0].results.length, 1);
   const sarifPath = writeExport(root, result, "sarif", "reports/result.sarif.json");
+  const markdownPath = writeExport(root, result, "markdown", "reports/findings.md");
+  assert.match(readFileSync(markdownPath, "utf8"), /# AI-Slop Findings Report/);
   const imported = importSarif(root, [path.relative(root, sarifPath)]);
   assert.equal(imported.findings.length, 1);
   assert.match(imported.findings[0].ruleId, /test\.rule/);
   assert.doesNotThrow(() => JSON.parse(readFileSync(new URL("../schema/scan-result.schema.json", import.meta.url), "utf8")));
   assert.doesNotThrow(() => JSON.parse(readFileSync(new URL("../schema/config.schema.json", import.meta.url), "utf8")));
+});
+
+test("Markdown reports rank findings by weighted severity and retain review evidence", () => {
+  const root = fixture();
+  const result = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [
+      {
+        ...finding(),
+        anchor: "low",
+        ruleId: "test.low",
+        confidence: "C1",
+        risk: "R1",
+        message: "Low [link](javascript:alert(1)) *priority* <script>",
+        evidence: ["low evidence"],
+      },
+      {
+        ...finding(),
+        anchor: "critical",
+        ruleId: "data.hidden-catch-fallback",
+        confidence: "C3",
+        risk: "R3",
+        message: "Critical priority finding",
+        evidence: ["strong evidence"],
+        counterEvidence: ["review this caveat"],
+        unknown: ["runtime behavior"],
+      },
+    ],
+    skipped: [],
+  });
+  result.policyDecisions = result.findings.map((item) => ({
+    findingId: item.id,
+    originalConfidence: item.confidence,
+    finalConfidence: item.confidence,
+    originalAction: item.maximumAction,
+    finalAction: item.maximumAction,
+    evidenceScore: item.ruleId === "data.hidden-catch-fallback" ? 0.95 : 0.4,
+    reasons: ["deterministic policy note"],
+  }));
+  const markdown = toMarkdown(result);
+  assert.ok(markdown.indexOf("data.hidden-catch-fallback") < markdown.indexOf("test.low"));
+  assert.match(markdown, /Critical Findings \(1\)/);
+  assert.match(markdown, /Low Findings \(1\)/);
+  assert.match(markdown, /60% risk \+ 25% confidence \+ 15% policy evidence/);
+  assert.match(markdown, /#### Counterevidence[\s\S]*review this caveat/);
+  assert.match(markdown, /#### Unknowns[\s\S]*runtime behavior/);
+  assert.match(markdown, /#### Policy Notes[\s\S]*deterministic policy note/);
+  assert.match(markdown, /#### Possible Remediation[\s\S]*safe-looking fallback/);
+  assert.match(markdown, /current policy does not authorize an automatic patch/);
+  assert.match(markdown, /#### Suggested Verification[\s\S]*failure path/);
+  assert.ok(markdown.includes("Low \\[link\\](javascript:alert(1)) \\*priority\\* &lt;script&gt;"));
+  assert.doesNotMatch(markdown, /<script>/);
+  const text = formatReport(result);
+  assert.ok(text.indexOf("data.hidden-catch-fallback") < text.indexOf("test.low"));
+  assert.match(text, /CRITICAL 99\/100 C3 data\.hidden-catch-fallback/);
 });
 
 test("exports reject symlink escapes and default to private extension state", () => {
@@ -97,7 +164,10 @@ test("exports reject symlink escapes and default to private extension state", ()
   assert.throws(() => writeExport(root, result, "json", "linked/result.json"), /outside/);
   const state = mkdtempSync(path.join(tmpdir(), "ai-slop-export-state-"));
   const output = writeExport(root, result, "json", undefined, state);
+  const markdown = writeExport(root, result, "markdown", undefined, state);
   assert.equal(existsSync(output), true);
+  assert.equal(existsSync(markdown), true);
+  assert.match(markdown, /\.md$/);
   assert.equal(path.relative(root, output).startsWith(".."), true);
 });
 

@@ -6,6 +6,7 @@ import { Type } from "typebox";
 
 import { loadConfig, type LoadedConfig } from "./src/core/config.ts";
 import { discoverRepositoryFiles } from "./src/core/discovery.ts";
+import { rankFindings, weightedSeverity } from "./src/core/severity.ts";
 import { AssuranceLedger, diffScans, type ScanDelta, type VerificationStatus } from "./src/core/ledger.ts";
 import { StateStore } from "./src/core/store.ts";
 import { diagnose, formatDiagnostics } from "./src/diagnostics.ts";
@@ -34,6 +35,7 @@ interface ReviewOutcome {
   verification: VerificationStatus[];
   claims: ClaimAssessment[];
   warnings: string[];
+  reportPath?: string;
 }
 
 function splitCommandPaths(args: string): string[] {
@@ -50,6 +52,7 @@ function reviewText(outcome: ReviewOutcome, maxFindings: number): string {
   const sections = [formatReport(outcome.result, maxFindings), formatDelta(outcome.delta)];
   if (outcome.verification.length) sections.push(formatTimeline([], outcome.verification));
   if (outcome.claims.length) sections.push(formatClaims(outcome.claims));
+  if (outcome.reportPath) sections.push(`Markdown report: ${outcome.reportPath}`);
   if (outcome.warnings.length) sections.push(`Warnings:\n${outcome.warnings.map((item) => `  ${item}`).join("\n")}`);
   return sections.join("\n\n");
 }
@@ -97,6 +100,7 @@ export default function (pi: any): void {
 
   const findingDetails = (finding: Finding): string => {
     const decision = lastOutcome?.result.policyDecisions.find((item) => item.findingId === finding.id);
+    const severity = weightedSeverity(finding, decision);
     const providers = lastOutcome?.result.evidenceRecords
       .filter((item) => finding.evidenceIds.includes(item.id) || item.source?.filePath === finding.filePath && item.source.end >= finding.start && item.source.start <= finding.end)
       .map((item) => item.providerId) ?? [];
@@ -104,6 +108,7 @@ export default function (pi: any): void {
       `${finding.confidence} ${finding.ruleId} ${finding.filePath}:${finding.line}:${finding.column}`,
       finding.message,
       `ID: ${finding.id}`,
+      `Weighted severity: ${severity.severity} (${severity.score}/100)`,
       `Classification: ${finding.classification}; risk: ${finding.risk}; maximum action: ${finding.maximumAction}`,
       `Providers: ${[...new Set(providers)].join(", ") || "detector only"}`,
       ...finding.evidence.map((item) => `Evidence: ${item}`),
@@ -140,12 +145,19 @@ export default function (pi: any): void {
     } catch (error) {
       warnings.push(`state store: ${(error as Error).message}`);
     }
+    let reportPath: string | undefined;
+    try {
+      reportPath = writeExport(cwd, result, "markdown");
+    } catch (error) {
+      warnings.push(`markdown report: ${(error as Error).message}`);
+    }
     return {
       result,
       delta: diffScans(result, baseline),
       verification: ledger.verificationStatus(paths),
       claims: claimsText ? ledger.assessClaims(claimsText) : [],
       warnings,
+      reportPath,
     };
   };
 
@@ -190,7 +202,7 @@ export default function (pi: any): void {
         lastOutcome = outcome;
         pi.appendEntry(ENTRY_TYPE, outcome);
         ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} findings · ${outcome.delta.added.length} new`);
-        ctx.ui.notify(`AI-slop review: ${resultSummary(outcome)}`, outcome.result.findings.length ? "warning" : "info");
+        ctx.ui.notify(`AI-slop review: ${resultSummary(outcome)}${outcome.reportPath ? `\nMarkdown: ${outcome.reportPath}` : ""}`, outcome.result.findings.length ? "warning" : "info");
       } catch (error) {
         ctx.ui.setStatus("ai-slop", "review failed");
         ctx.ui.notify(`AI-slop review failed: ${(error as Error).message}`, "error");
@@ -215,7 +227,7 @@ export default function (pi: any): void {
         lastOutcome = outcome;
         pi.appendEntry(ENTRY_TYPE, outcome);
         ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} audit findings · ${outcome.delta.added.length} new`);
-        ctx.ui.notify(`AI-slop audit: ${resultSummary(outcome)}`, outcome.result.findings.length ? "warning" : "info");
+        ctx.ui.notify(`AI-slop audit: ${resultSummary(outcome)}${outcome.reportPath ? `\nMarkdown: ${outcome.reportPath}` : ""}`, outcome.result.findings.length ? "warning" : "info");
       } catch (error) {
         ctx.ui.setStatus("ai-slop", "audit failed");
         ctx.ui.notify(`AI-slop audit failed: ${(error as Error).message}`, "error");
@@ -235,7 +247,9 @@ export default function (pi: any): void {
       try {
         if (args.trim()) finding = findingByPrefix(args.trim());
         else {
-          const options = lastOutcome.result.findings.slice(0, 200).map((item) => `${item.id.slice(-8)}  ${item.confidence} ${item.ruleId}  ${item.filePath}:${item.line}`);
+          const options = rankFindings(lastOutcome.result.findings, lastOutcome.result.policyDecisions)
+            .slice(0, 200)
+            .map((item) => `${item.finding.id.slice(-8)}  ${item.severity.toUpperCase()} ${item.score}/100  ${item.finding.ruleId}  ${item.finding.filePath}:${item.finding.line}`);
           const selected = await ctx.ui.select("AI-slop findings", options);
           if (!selected) return;
           const suffix = selected.split(/\s+/)[0];
@@ -354,16 +368,17 @@ export default function (pi: any): void {
   });
 
   pi.registerCommand("slop-export", {
-    description: "Export the latest review as json or SARIF; optional explicit project-relative output path",
+    description: "Export the latest review as Markdown, JSON, or SARIF; optional explicit project-relative output path",
     handler: async (args: string, ctx: any) => {
       ensureInitialized(ctx);
       if (!lastOutcome) {
         ctx.ui.notify("Run /slop-review or /slop-audit first", "warning");
         return;
       }
-      const [format = "json", outputPath] = splitCommandPaths(args);
-      if (format !== "json" && format !== "sarif") {
-        ctx.ui.notify("Usage: /slop-export <json|sarif> [project-relative-path]", "warning");
+      const [requestedFormat = "json", outputPath] = splitCommandPaths(args);
+      const format = requestedFormat === "md" ? "markdown" : requestedFormat;
+      if (format !== "json" && format !== "sarif" && format !== "markdown") {
+        ctx.ui.notify("Usage: /slop-export <markdown|json|sarif> [project-relative-path]", "warning");
         return;
       }
       try {

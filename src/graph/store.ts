@@ -63,41 +63,63 @@ export class GraphStore {
   }
 
   updateFile(facts: GraphFileFacts): boolean {
-    const current = this.database.prepare("SELECT source_hash FROM files WHERE path = ?").get(facts.filePath) as any;
-    if (current?.source_hash === facts.sourceHash) return false;
+    return this.updateFiles([facts]) === 1;
+  }
+
+  updateFiles(files: GraphFileFacts[]): number {
+    if (!files.length) return 0;
+    const current = this.database.prepare("SELECT source_hash FROM files WHERE path = ?");
+    const nodeIds = this.database.prepare("SELECT id FROM nodes WHERE file_path = ?");
+    const deleteEdges = this.database.prepare("DELETE FROM edges WHERE file_path = ?");
+    const deleteIncomingEdge = this.database.prepare("DELETE FROM edges WHERE to_id = ?");
+    const deleteNodes = this.database.prepare("DELETE FROM nodes WHERE file_path = ?");
+    const upsertFile = this.database.prepare(
+      "INSERT INTO files(path, source_hash, language, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET source_hash=excluded.source_hash, language=excluded.language, updated_at=excluded.updated_at",
+    );
+    const insertNode = this.database.prepare(
+      "INSERT OR REPLACE INTO nodes(id, file_path, kind, name, qualified_name, start, end, exported, signature, body_hash, metadata) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    const insertEdge = this.database.prepare(
+      "INSERT OR REPLACE INTO edges(id, file_path, from_id, to_id, kind, confidence, metadata) VALUES(?, ?, ?, ?, ?, ?, ?)",
+    );
+    let updated = 0;
+    const updatedAt = new Date().toISOString();
     this.database.exec("BEGIN IMMEDIATE");
     try {
-      this.database.prepare("DELETE FROM edges WHERE file_path = ?").run(facts.filePath);
-      this.database.prepare("DELETE FROM nodes WHERE file_path = ?").run(facts.filePath);
-      this.database
-        .prepare("INSERT INTO files(path, source_hash, language, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET source_hash=excluded.source_hash, language=excluded.language, updated_at=excluded.updated_at")
-        .run(facts.filePath, facts.sourceHash, facts.language, new Date().toISOString());
-      const insertNode = this.database.prepare(
-        "INSERT OR REPLACE INTO nodes(id, file_path, kind, name, qualified_name, start, end, exported, signature, body_hash, metadata) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      );
-      for (const node of facts.nodes) {
-        insertNode.run(
-          node.id,
-          node.filePath,
-          node.kind,
-          node.name,
-          node.qualifiedName,
-          node.start,
-          node.end,
-          node.exported ? 1 : 0,
-          node.signature ?? null,
-          node.bodyHash ?? null,
-          JSON.stringify(node.metadata),
-        );
-      }
-      const insertEdge = this.database.prepare(
-        "INSERT OR REPLACE INTO edges(id, file_path, from_id, to_id, kind, confidence, metadata) VALUES(?, ?, ?, ?, ?, ?, ?)",
-      );
-      for (const edge of facts.edges) {
-        insertEdge.run(edge.id, edge.filePath, edge.fromId, edge.toId, edge.kind, edge.confidence, JSON.stringify(edge.metadata));
+      for (const facts of files) {
+        const existing = current.get(facts.filePath) as any;
+        if (existing?.source_hash === facts.sourceHash) continue;
+        if (existing) {
+          const nextNodeIds = new Set(facts.nodes.map((node) => node.id));
+          for (const row of nodeIds.all(facts.filePath) as Array<{ id: string }>) {
+            if (!nextNodeIds.has(String(row.id))) deleteIncomingEdge.run(row.id);
+          }
+        }
+        deleteEdges.run(facts.filePath);
+        deleteNodes.run(facts.filePath);
+        upsertFile.run(facts.filePath, facts.sourceHash, facts.language, updatedAt);
+        for (const node of facts.nodes) {
+          insertNode.run(
+            node.id,
+            node.filePath,
+            node.kind,
+            node.name,
+            node.qualifiedName,
+            node.start,
+            node.end,
+            node.exported ? 1 : 0,
+            node.signature ?? null,
+            node.bodyHash ?? null,
+            JSON.stringify(node.metadata),
+          );
+        }
+        for (const edge of facts.edges) {
+          insertEdge.run(edge.id, edge.filePath, edge.fromId, edge.toId, edge.kind, edge.confidence, JSON.stringify(edge.metadata));
+        }
+        updated += 1;
       }
       this.database.exec("COMMIT");
-      return true;
+      return updated;
     } catch (error) {
       this.database.exec("ROLLBACK");
       throw error;
@@ -108,10 +130,13 @@ export class GraphStore {
     if (!paths.length) return;
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      const nodeIds = this.database.prepare("SELECT id FROM nodes WHERE file_path = ?");
       const deleteEdges = this.database.prepare("DELETE FROM edges WHERE file_path = ?");
+      const deleteIncomingEdge = this.database.prepare("DELETE FROM edges WHERE to_id = ?");
       const deleteNodes = this.database.prepare("DELETE FROM nodes WHERE file_path = ?");
       const deleteFile = this.database.prepare("DELETE FROM files WHERE path = ?");
       for (const filePath of paths) {
+        for (const row of nodeIds.all(filePath) as Array<{ id: string }>) deleteIncomingEdge.run(row.id);
         deleteEdges.run(filePath);
         deleteNodes.run(filePath);
         deleteFile.run(filePath);
@@ -121,6 +146,10 @@ export class GraphStore {
       this.database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  files(): string[] {
+    return this.database.prepare("SELECT path FROM files ORDER BY path").all().map((row: any) => String(row.path));
   }
 
   nodes(filePath?: string): GraphNode[] {
@@ -161,6 +190,13 @@ export class GraphStore {
 
   clones(bodyHash: string): GraphNode[] {
     return this.database.prepare("SELECT * FROM nodes WHERE body_hash = ? ORDER BY file_path, start").all(bodyHash).map(rowNode);
+  }
+
+  duplicateBodyGroups(): Set<string> {
+    const rows = this.database
+      .prepare("SELECT kind, body_hash FROM nodes WHERE body_hash IS NOT NULL GROUP BY kind, body_hash HAVING COUNT(*) > 1")
+      .all() as Array<{ kind: string; body_hash: string }>;
+    return new Set(rows.map((row) => `${row.kind}:${row.body_hash}`));
   }
 
   impact(symbolId: string, maxDepth = 3): ImpactResult {

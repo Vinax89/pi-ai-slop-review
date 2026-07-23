@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-07-23T14:41:03.582Z",
-  "scanId": "scan:017c125dfd80163773cc40d7",
-  "paths": 68,
+  "generatedAt": "2026-07-23T18:02:28.764Z",
+  "scanId": "scan:5d195d04dd09c79060b5bf4f",
+  "paths": 69,
   "discoveryTruncated": false,
-  "scanned": 68,
+  "scanned": 69,
   "activeFindings": 5,
   "actionableFindings": 0,
   "findingsByRule": {

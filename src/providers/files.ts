@@ -29,7 +29,7 @@ export function safeProjectFile(rootDir: string, rawPath: string, maxBytes = 16 
   }
 }
 
-export function offsetRange(filePath: string, source: string, start: number, end: number): SourceRange {
+export function offsetRange(filePath: string, source: string, start: number, end: number, sourceHash = sha256(source)): SourceRange {
   const boundedStart = Math.min(Math.max(0, start), source.length);
   const boundedEnd = Math.min(Math.max(boundedStart, end), source.length);
   const prefix = source.slice(0, boundedStart);
@@ -40,7 +40,7 @@ export function offsetRange(filePath: string, source: string, start: number, end
     column: boundedStart - lastNewline,
     start: boundedStart,
     end: boundedEnd,
-    sourceHash: sha256(source),
+    sourceHash,
   };
 }
 

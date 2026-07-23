@@ -80,7 +80,7 @@ export const DEFAULT_CONFIG: AiSlopConfig = {
   experiments: {},
   verification: { commands: [] },
   limits: {
-    maxFiles: 500,
+    maxFiles: 10_000,
     maxFileBytes: 1024 * 1024,
     commandTimeoutMs: 120_000,
     maxOutputBytes: 5 * 1024 * 1024,

@@ -1,9 +1,11 @@
 import type { ScanDelta, VerificationStatus } from "./core/ledger.ts";
-import type { ClaimAssessment, Finding, LedgerEvent, ScanResult } from "./types.ts";
+import { rankFindings, type RankedFinding } from "./core/severity.ts";
+import type { ClaimAssessment, LedgerEvent, ScanResult } from "./types.ts";
 
-function formatFinding(finding: Finding): string {
-  const header = `${finding.confidence} ${finding.ruleId} ${finding.filePath}:${finding.line}:${finding.column}`;
-  const lines = [header, `  ${finding.message}`, ...finding.evidence.map((item) => `  evidence: ${item}`)];
+function formatFinding(item: RankedFinding): string {
+  const { finding } = item;
+  const header = `${item.severity.toUpperCase()} ${item.score}/100 ${finding.confidence} ${finding.ruleId} ${finding.filePath}:${finding.line}:${finding.column}`;
+  const lines = [header, `  ${finding.message}`, ...finding.evidence.map((evidence) => `  evidence: ${evidence}`)];
   for (const item of finding.counterEvidence) lines.push(`  counterevidence: ${item}`);
   for (const item of finding.unknown) lines.push(`  unknown: ${item}`);
   lines.push(`  maximum action: ${finding.maximumAction}`);
@@ -11,7 +13,7 @@ function formatFinding(finding: Finding): string {
 }
 
 export function formatReport(result: ScanResult, maxFindings = 100): string {
-  const shown = result.findings.slice(0, maxFindings);
+  const shown = rankFindings(result.findings, result.policyDecisions).slice(0, maxFindings);
   const lines = [
     `AI-slop review (read-only): ${result.findings.length} active finding(s), ${result.suppressedFindings.length} suppressed, in ${result.scannedFiles.length} file(s)`,
     `Engine: ${result.engine} ${result.engineVersion}`,

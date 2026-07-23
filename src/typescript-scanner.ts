@@ -14,13 +14,16 @@ const MAX_FILE_BYTES = 1024 * 1024;
 const BUILTINS = new Set(builtinModules.flatMap((name) => [name, name.replace(/^node:/, ""), `node:${name.replace(/^node:/, "")}`]));
 const LOG_METHODS = new Set(["debug", "error", "exception", "info", "log", "trace", "warn", "warning"]);
 
-interface Project {
+export interface TypeScriptProjectContext {
+  files: string[];
   program: ts.Program;
   checker: ts.TypeChecker;
   options: ts.CompilerOptions;
   configPath?: string;
   configHasErrors: boolean;
 }
+
+type Project = TypeScriptProjectContext;
 
 interface WrapperCandidate {
   sourceFile: ts.SourceFile;
@@ -57,7 +60,7 @@ function findProjectConfig(root: string, filePath: string): string | undefined {
   return undefined;
 }
 
-function createProject(files: string[], configPath?: string, includeProjectFiles = false): Project {
+function createProject(files: string[], configPath?: string): Project {
   let options: ts.CompilerOptions;
   let rootNames: string[];
   let configHasErrors = false;
@@ -72,6 +75,9 @@ function createProject(files: string[], configPath?: string, includeProjectFiles
       const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, path.dirname(configPath));
       configHasErrors = parsed.errors.length > 0;
       options = { ...parsed.options, allowJs: true, noEmit: true };
+      const requestedFiles = new Set(files.map(normalizePath));
+      const coversProject = parsed.fileNames.every((filePath) => requestedFiles.has(normalizePath(filePath)));
+      const includeProjectFiles = !coversProject && files.some(containsWrapperCandidate);
       rootNames = includeProjectFiles ? [...new Set([...parsed.fileNames, ...files])] : files;
     }
   } else {
@@ -81,6 +87,7 @@ function createProject(files: string[], configPath?: string, includeProjectFiles
 
   const program = ts.createProgram({ rootNames, options });
   return {
+    files,
     program,
     checker: program.getTypeChecker(),
     options,
@@ -509,23 +516,33 @@ function resolveFiles(rootDir: string, inputs: string[]): { files: string[]; ski
   return { files: [...new Set(files)], skipped };
 }
 
-export function scanTypeScriptFiles(rootDir: string, inputPaths: string[]): ScanResult {
+export function scanTypeScriptFilesWithProjects(
+  rootDir: string,
+  inputPaths: string[],
+): { result: ScanResult; projects: TypeScriptProjectContext[] } {
   const root = realpathSync(rootDir);
   const resolved = resolveFiles(root, inputPaths);
   const findings: FindingDraft[] = [];
   const scannedFiles: string[] = [];
   const skipped = [...resolved.skipped];
   const groups = new Map<string, string[]>();
+  const configPaths = new Map<string, string | undefined>();
+  const projects: TypeScriptProjectContext[] = [];
 
   for (const file of resolved.files) {
-    const configPath = findProjectConfig(root, file);
+    const directory = path.dirname(file);
+    if (!configPaths.has(directory)) configPaths.set(directory, findProjectConfig(root, file));
+    const configPath = configPaths.get(directory);
     const key = configPath ?? "<none>";
-    groups.set(key, [...(groups.get(key) ?? []), file]);
+    const group = groups.get(key);
+    if (group) group.push(file);
+    else groups.set(key, [file]);
   }
 
   for (const [key, files] of groups) {
     // ponytail: only pay for a full project when wrapper reference evidence needs it.
-    const project = createProject(files, key === "<none>" ? undefined : key, files.some(containsWrapperCandidate));
+    const project = createProject(files, key === "<none>" ? undefined : key);
+    projects.push(project);
     const hashes = new Map<string, string>();
     const validFiles = new Set<string>();
 
@@ -536,7 +553,7 @@ export function scanTypeScriptFiles(rootDir: string, inputPaths: string[]): Scan
         skipped.push({ filePath: display, reason: "TypeScript program did not include the file" });
         continue;
       }
-      const text = readFileSync(file, "utf8");
+      const text = sourceFile.text;
       if (isGenerated(display, text)) {
         skipped.push({ filePath: display, reason: "generated or vendor-like file" });
         continue;
@@ -558,15 +575,22 @@ export function scanTypeScriptFiles(rootDir: string, inputPaths: string[]): Scan
     findings.push(...wrapperFindings(project, root, wrappers, hashes));
   }
 
-  return createScanResult({
-    engine: "typescript-semantic",
-    engineVersion: ts.version,
-    rootDir: root,
-    providerId: "typescript-semantic",
-    providerVersion: ts.version,
-    providerCapabilities: ["syntax", "types", "resolution", "symbols", "references", "diagnostics"],
-    scannedFiles,
-    findings,
-    skipped,
-  });
+  return {
+    result: createScanResult({
+      engine: "typescript-semantic",
+      engineVersion: ts.version,
+      rootDir: root,
+      providerId: "typescript-semantic",
+      providerVersion: ts.version,
+      providerCapabilities: ["syntax", "types", "resolution", "symbols", "references", "diagnostics"],
+      scannedFiles,
+      findings,
+      skipped,
+    }),
+    projects,
+  };
+}
+
+export function scanTypeScriptFiles(rootDir: string, inputPaths: string[]): ScanResult {
+  return scanTypeScriptFilesWithProjects(rootDir, inputPaths).result;
 }

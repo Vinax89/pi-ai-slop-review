@@ -9,10 +9,13 @@ import type { AiSlopConfig } from "../core/config.ts";
 import { fingerprint, normalizePath, sha256 } from "../core/schema.ts";
 import { canonicalSymbol } from "../core/typescript.ts";
 import { safeProjectFile } from "../providers/files.ts";
+import type { TypeScriptProjectContext } from "../typescript-scanner.ts";
 import type { GraphEdge, GraphFileFacts, GraphNode, GraphNodeKind } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
 const PYTHON_HELPER = fileURLToPath(new URL("../python_graph_helper.py", import.meta.url));
+const PYTHON_BATCH_SIZE = 500;
+const PYTHON_BATCH_CONCURRENCY = 4;
 const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 
 function matches(filePath: string, patterns: string[]): boolean {
@@ -123,11 +126,15 @@ function frameworkMetadata(name: string, exported: boolean, sourceFile: ts.Sourc
   };
 }
 
-function configForFile(rootDir: string, filePath: string): { rootNames: string[]; options: ts.CompilerOptions } {
+function configPathForFile(rootDir: string, filePath: string): string | undefined {
   const configPath = ts.findConfigFile(path.dirname(filePath), ts.sys.fileExists, "tsconfig.json") ?? ts.findConfigFile(path.dirname(filePath), ts.sys.fileExists, "jsconfig.json");
-  if (!configPath || !normalizePath(configPath).startsWith(`${normalizePath(rootDir)}/`)) {
+  return configPath && normalizePath(configPath).startsWith(`${normalizePath(rootDir)}/`) ? configPath : undefined;
+}
+
+function configForFiles(files: string[], configPath?: string): { rootNames: string[]; options: ts.CompilerOptions } {
+  if (!configPath) {
     return {
-      rootNames: [filePath],
+      rootNames: files,
       options: {
         allowJs: true,
         checkJs: false,
@@ -139,9 +146,9 @@ function configForFile(rootDir: string, filePath: string): { rootNames: string[]
     };
   }
   const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
-  if (loaded.error) return { rootNames: [filePath], options: {} };
+  if (loaded.error) return { rootNames: files, options: {} };
   const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, path.dirname(configPath));
-  return { rootNames: [...new Set([...parsed.fileNames, filePath])], options: { ...parsed.options, allowJs: true } };
+  return { rootNames: [...new Set([...parsed.fileNames, ...files])], options: { ...parsed.options, allowJs: true } };
 }
 
 function declarationId(rootDir: string, checker: ts.TypeChecker, symbol: ts.Symbol | undefined): string | undefined {
@@ -156,22 +163,50 @@ function declarationId(rootDir: string, checker: ts.TypeChecker, symbol: ts.Symb
   return nodeId(filePath, kind, qualifiedName(declaration, canonical.name));
 }
 
-function extractTypescript(rootDir: string, inputFiles: string[], config: AiSlopConfig): GraphFileFacts[] {
+function extractTypescript(
+  rootDir: string,
+  inputFiles: string[],
+  config: AiSlopConfig,
+  reusableProjects: TypeScriptProjectContext[] = [],
+): GraphFileFacts[] {
   const groups = new Map<string, string[]>();
+  const configPaths = new Map<string, string | undefined>();
+  const reusableByKey = new Map<string, TypeScriptProjectContext>();
+  const reusableByFile = new Map<string, string>();
+  for (const [index, project] of reusableProjects.entries()) {
+    const key = `<reusable:${index}>`;
+    reusableByKey.set(key, project);
+    for (const filePath of project.files) reusableByFile.set(normalizePath(filePath), key);
+  }
   for (const filePath of inputFiles) {
-    const project = configForFile(rootDir, filePath);
-    const key = fingerprint("ts-project", { options: project.options, rootNames: project.rootNames });
-    groups.set(key, [...(groups.get(key) ?? []), filePath]);
+    const directory = path.dirname(filePath);
+    let key = reusableByFile.get(normalizePath(filePath));
+    if (!key) {
+      if (!configPaths.has(directory)) configPaths.set(directory, configPathForFile(rootDir, filePath));
+      key = configPaths.get(directory) ?? "<none>";
+    }
+    const group = groups.get(key);
+    if (group) group.push(filePath);
+    else groups.set(key, [filePath]);
   }
   const facts: GraphFileFacts[] = [];
-  for (const files of groups.values()) {
-    const project = configForFile(rootDir, files[0]);
-    const program = ts.createProgram({ rootNames: [...new Set([...project.rootNames, ...files])], options: project.options });
-    const checker = program.getTypeChecker();
+  for (const [key, files] of groups) {
+    const reusable = reusableByKey.get(key);
+    let program: ts.Program;
+    let checker: ts.TypeChecker;
+    let options: ts.CompilerOptions;
+    if (reusable) {
+      ({ program, checker, options } = reusable);
+    } else {
+      const project = configForFiles(files, key === "<none>" ? undefined : key);
+      options = project.options;
+      program = ts.createProgram({ rootNames: project.rootNames, options });
+      checker = program.getTypeChecker();
+    }
     for (const absolutePath of files) {
       const sourceFile = program.getSourceFile(absolutePath);
       if (!sourceFile) continue;
-      const source = readFileSync(absolutePath, "utf8");
+      const source = sourceFile.text;
       const filePath = normalizePath(path.relative(rootDir, absolutePath));
       const isTest = matches(filePath, config.graph.testPatterns);
       const rootNode = fileNode(filePath, source.length, "typescript");
@@ -235,7 +270,7 @@ function extractTypescript(rootDir: string, inputFiles: string[], config: AiSlop
       const visitEdges = (node: ts.Node): void => {
         if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
           const specifier = node.moduleSpecifier.text;
-          const resolved = ts.resolveModuleName(specifier, absolutePath, project.options, ts.sys).resolvedModule?.resolvedFileName;
+          const resolved = ts.resolveModuleName(specifier, absolutePath, options, ts.sys).resolvedModule?.resolvedFileName;
           const targetId = resolved && normalizePath(path.resolve(resolved)).startsWith(`${normalizePath(rootDir)}/`)
             ? nodeId(normalizePath(path.relative(rootDir, resolved)), "file", normalizePath(path.relative(rootDir, resolved)))
             : fingerprint("graph-dependency", { specifier });
@@ -273,7 +308,7 @@ function extractTypescript(rootDir: string, inputFiles: string[], config: AiSlop
         if (!current || (!current.bodyHash && graphNode.bodyHash)) uniqueNodes.set(graphNode.id, graphNode);
       }
       const uniqueEdges = [...new Map(edges.map((graphEdge) => [graphEdge.id, graphEdge])).values()];
-      facts.push({ filePath, sourceHash: sha256(source), language: "typescript", nodes: [...uniqueNodes.values()], edges: uniqueEdges });
+      facts.push({ filePath, sourceHash: sha256(source), source, language: "typescript", nodes: [...uniqueNodes.values()], edges: uniqueEdges });
     }
   }
   return facts;
@@ -284,16 +319,47 @@ interface PythonGraphOutput {
   errors: Record<string, string>;
 }
 
-async function extractPython(rootDir: string, paths: string[], signal?: AbortSignal): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string> }> {
-  if (!paths.length) return { facts: [], errors: {} };
+async function runPythonGraphHelper(rootDir: string, paths: string[], signal?: AbortSignal): Promise<PythonGraphOutput> {
   const { stdout } = await execFileAsync(process.env.PI_AI_SLOP_PYTHON ?? "python3", ["-I", "-S", PYTHON_HELPER, rootDir, ...paths], {
     encoding: "utf8",
     maxBuffer: 8 * 1024 * 1024,
     timeout: 30_000,
     signal,
   });
-  const parsed = JSON.parse(stdout) as PythonGraphOutput;
-  const facts = Object.entries(parsed.files).map(([filePath, raw]) => {
+  return JSON.parse(stdout) as PythonGraphOutput;
+}
+
+async function extractPython(rootDir: string, paths: string[], signal?: AbortSignal): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string> }> {
+  if (!paths.length) return { facts: [], errors: {} };
+  const batches = Array.from({ length: Math.ceil(paths.length / PYTHON_BATCH_SIZE) }, (_, index) =>
+    paths.slice(index * PYTHON_BATCH_SIZE, (index + 1) * PYTHON_BATCH_SIZE));
+  const outputs = new Array<PythonGraphOutput>(batches.length);
+  let nextBatch = 0;
+  const worker = async (): Promise<void> => {
+    while (nextBatch < batches.length) {
+      const index = nextBatch;
+      nextBatch += 1;
+      const batch = batches[index];
+      if (signal?.aborted) {
+        outputs[index] = { files: {}, errors: Object.fromEntries(batch.map((filePath) => [filePath, "Python graph scan aborted"])) };
+        continue;
+      }
+      try {
+        outputs[index] = await runPythonGraphHelper(rootDir, batch, signal);
+      } catch (error) {
+        const message = signal?.aborted ? "Python graph scan aborted" : `Python graph scan unavailable: ${error instanceof Error ? error.message : String(error)}`;
+        outputs[index] = { files: {}, errors: Object.fromEntries(batch.map((filePath) => [filePath, message])) };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PYTHON_BATCH_CONCURRENCY, batches.length) }, worker));
+  const files: PythonGraphOutput["files"] = {};
+  const errors: Record<string, string> = {};
+  for (const output of outputs) {
+    Object.assign(files, output.files);
+    Object.assign(errors, output.errors);
+  }
+  const facts = Object.entries(files).map(([filePath, raw]) => {
     const source = readFileSync(path.join(rootDir, filePath), "utf8");
     const rootNode = fileNode(filePath, source.length, "python");
     const nodes: GraphNode[] = [rootNode];
@@ -319,7 +385,7 @@ async function extractPython(rootDir: string, paths: string[], signal?: AbortSig
     }
     return { filePath, sourceHash: sha256(source), language: path.basename(filePath) === "pyproject.toml" ? "toml" : "python", nodes, edges };
   });
-  return { facts, errors: parsed.errors };
+  return { facts, errors };
 }
 
 function extractPackageJson(rootDir: string, paths: string[]): { facts: GraphFileFacts[]; errors: Record<string, string> } {
@@ -424,6 +490,7 @@ export async function buildGraphFacts(
   paths: string[],
   config: AiSlopConfig,
   signal?: AbortSignal,
+  reusableProjects: TypeScriptProjectContext[] = [],
 ): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string> }> {
   const root = realpathSync(rootDir);
   const valid = paths.flatMap((rawPath) => {
@@ -444,7 +511,7 @@ export async function buildGraphFacts(
   const packageJson = extractPackageJson(root, packagePaths);
   return {
     facts: [
-      ...extractTypescript(root, typescriptFiles, config),
+      ...extractTypescript(root, typescriptFiles, config, reusableProjects),
       ...python.facts,
       ...packageJson.facts,
       ...extractMarkdown(root, markdownPaths, config),

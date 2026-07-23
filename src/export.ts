@@ -3,8 +3,12 @@ import path from "node:path";
 
 import { isInside, nearestExistingParent } from "./core/paths.ts";
 import { canonicalJson } from "./core/schema.ts";
+import { rankFindings, SEVERITIES } from "./core/severity.ts";
 import { StateStore } from "./core/store.ts";
+import { loadRulePolicies, type ExecutableRulePolicy } from "./policy/rules.ts";
 import type { Finding, ScanResult } from "./types.ts";
+
+export type ExportFormat = "json" | "sarif" | "markdown";
 
 function sarifLevel(finding: Finding): "error" | "warning" | "note" {
   if (finding.classification === "defect" && finding.confidence !== "C1") return "error";
@@ -84,14 +88,147 @@ export function toSarif(result: ScanResult): Record<string, unknown> {
   };
 }
 
-export function serializeExport(result: ScanResult, format: "json" | "sarif"): string {
+function markdownText(value: unknown): string {
+  return String(value)
+    .replace(/\s+/g, " ")
+    .trim()
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("|", "\\|")
+    .replace(/[\\`*_\[\]~]/g, "\\$&");
+}
+
+function findingList(title: string, values: string[]): string[] {
+  return values.length ? [`#### ${title}`, ...values.map((value) => `- ${markdownText(value)}`), ""] : [];
+}
+
+function remediationFor(finding: Finding, policy?: ExecutableRulePolicy): { possible: string[]; verification: string[] } {
+  const possible = ["Confirm the finding against the current source hash and repository context before changing code."];
+  if (finding.counterEvidence.length || finding.unknown.length) {
+    possible.push("Resolve the listed counterevidence and unknowns before selecting a remediation.");
+  }
+  possible.push(...(policy?.remediationSteps.length ? policy.remediationSteps : ["Inspect callers and contracts, then make the smallest change that addresses the reported behavior."]));
+  if (finding.risk === "R3") possible.push("Require manual review for this R3 finding; do not generate or apply an automatic patch.");
+  if (finding.maximumAction === "ignore") possible.push("Do not remediate while policy marks this finding as ignored or suppressed.");
+  else if (finding.maximumAction === "observe") possible.push("Treat these as investigation steps only; current policy does not authorize an automatic patch.");
+  else if (finding.maximumAction === "propose") possible.push("Draft the smallest patch as a proposal, then validate it in isolated baseline and candidate worktrees before explicit application.");
+  else possible.push("Use only an authoritative analyzer's released fix, then validate it before explicit application.");
+  const verification = [
+    ...(policy?.verificationSteps.length ? policy.verificationSteps : ["Run the smallest test or static check that proves the affected behavior."]),
+    "Re-run AI-slop review and confirm the finding is resolved without introducing new findings.",
+  ];
+  return { possible: [...new Set(possible)], verification: [...new Set(verification)] };
+}
+
+export function toMarkdown(result: ScanResult): string {
+  const rulePolicies = loadRulePolicies();
+  const evidenceProviders = new Map(result.evidenceRecords.map((evidence) => [evidence.id, evidence.providerId]));
+  const ranked = rankFindings(result.findings, result.policyDecisions);
+  const counts = Object.fromEntries(SEVERITIES.map((severity) => [severity, ranked.filter((item) => item.severity === severity).length]));
+  const lines = [
+    "# AI-Slop Findings Report",
+    "",
+    "> Weighted severity is a presentation priority only. Possible remediation is advisory and does not authorize automatic changes.",
+    "",
+    "## Scan Summary",
+    "",
+    "| Metric | Value |",
+    "| --- | ---: |",
+    `| Scan ID | ${markdownText(result.scanId)} |`,
+    `| Generated | ${markdownText(result.generatedAt)} |`,
+    `| Scope | ${markdownText(result.scope.mode)} |`,
+    `| Files scanned | ${result.scannedFiles.length} |`,
+    `| Active findings | ${result.findings.length} |`,
+    `| Suppressed findings | ${result.suppressedFindings.length} |`,
+    `| Skipped files | ${result.skipped.length} |`,
+    "",
+    "## Weighted Severity",
+    "",
+    "Score = 60% risk + 25% confidence + 15% policy evidence. Findings are sorted by score, then source location.",
+    "",
+    "| Severity | Score | Findings |",
+    "| --- | ---: | ---: |",
+    `| Critical | 85–100 | ${counts.Critical} |`,
+    `| High | 65–84 | ${counts.High} |`,
+    `| Medium | 40–64 | ${counts.Medium} |`,
+    `| Low | 0–39 | ${counts.Low} |`,
+    "",
+    "## Provider Health",
+    "",
+    "| Provider | Status | Version | Duration | Diagnostic |",
+    "| --- | --- | --- | ---: | --- |",
+    ...result.providers.map((provider) => `| ${markdownText(provider.id)} | ${provider.status} | ${markdownText(provider.version)} | ${provider.durationMs ?? "—"} | ${markdownText(provider.diagnostic ?? "")} |`),
+    "",
+  ];
+
+  if (!ranked.length) lines.push("## Findings", "", "_No active findings._", "");
+  let findingNumber = 0;
+  for (const severity of SEVERITIES) {
+    const findings = ranked.filter((item) => item.severity === severity);
+    if (!findings.length) continue;
+    lines.push(`## ${severity} Findings (${findings.length})`, "");
+    for (const item of findings) {
+      findingNumber += 1;
+      const { finding, decision } = item;
+      const providers = [...new Set(finding.evidenceIds.map((id) => evidenceProviders.get(id)).filter((value): value is string => Boolean(value)))];
+      const remediation = remediationFor(finding, rulePolicies.get(finding.ruleId));
+      lines.push(
+        `### ${findingNumber}. ${markdownText(finding.ruleId)} — ${markdownText(finding.message)}`,
+        "",
+        `- **Weighted severity:** ${item.severity} (${item.score}/100)`,
+        `- **Risk / confidence / evidence:** ${finding.risk} / ${finding.confidence} / ${item.evidenceScore.toFixed(2)}`,
+        `- **Classification:** ${markdownText(finding.classification)}`,
+        `- **Maximum action:** ${markdownText(finding.maximumAction)}`,
+        `- **Location:** ${markdownText(finding.filePath)}:${finding.line}:${finding.column} (offsets ${finding.start}–${finding.end})`,
+        `- **Finding ID:** ${markdownText(finding.id)}`,
+        `- **Anchor:** ${markdownText(finding.anchor)}`,
+        `- **Source hash:** ${markdownText(finding.sourceHash)}`,
+        `- **Providers:** ${providers.length ? providers.map(markdownText).join(", ") : "detector only"}`,
+        "",
+        ...findingList("Evidence", finding.evidence),
+        ...findingList("Counterevidence", finding.counterEvidence),
+        ...findingList("Unknowns", finding.unknown),
+        ...findingList("Policy Notes", decision?.reasons ?? []),
+        ...findingList("Possible Remediation", remediation.possible),
+        ...findingList("Suggested Verification", remediation.verification),
+      );
+    }
+  }
+
+  if (result.suppressedFindings.length) {
+    lines.push("## Suppressed Findings", "", "| Rule | Location | Message |", "| --- | --- | --- |");
+    for (const finding of result.suppressedFindings) {
+      lines.push(`| ${markdownText(finding.ruleId)} | ${markdownText(finding.filePath)}:${finding.line}:${finding.column} | ${markdownText(finding.message)} |`);
+    }
+    lines.push("");
+  }
+  if (result.ruleHealth.length) {
+    lines.push("## Rule Health", "", "| Rule | Status | Accepted / Samples | Precision | Threshold |", "| --- | --- | ---: | ---: | ---: |");
+    for (const health of result.ruleHealth) {
+      lines.push(`| ${markdownText(health.ruleId)} | ${health.status} | ${health.accepted} / ${health.samples} | ${health.precision?.toFixed(2) ?? "—"} | ${health.selectiveThreshold?.toFixed(2) ?? "—"} |`);
+    }
+    lines.push("");
+  }
+  if (result.skipped.length) {
+    lines.push("## Skipped Files", "", "| File | Provider | Reason |", "| --- | --- | --- |");
+    for (const skipped of result.skipped) {
+      lines.push(`| ${markdownText(skipped.filePath)} | ${markdownText(skipped.providerId ?? "native")} | ${markdownText(skipped.reason)} |`);
+    }
+    lines.push("");
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+export function serializeExport(result: ScanResult, format: ExportFormat): string {
+  if (format === "markdown") return toMarkdown(result);
   return `${format === "sarif" ? JSON.stringify(toSarif(result), null, 2) : canonicalJson(result)}\n`;
 }
 
 export function writeExport(
   rootDir: string,
   result: ScanResult,
-  format: "json" | "sarif",
+  format: ExportFormat,
   requestedPath?: string,
   stateRoot?: string,
 ): string {
@@ -104,7 +241,8 @@ export function writeExport(
     }
   } else {
     const store = new StateStore(rootDir, stateRoot);
-    outputPath = path.join(store.directory, "exports", `${result.scanId.replace(/[^A-Za-z0-9_.-]/g, "-")}.${format === "sarif" ? "sarif.json" : "json"}`);
+    const extension = format === "sarif" ? "sarif.json" : format === "markdown" ? "md" : "json";
+    outputPath = path.join(store.directory, "exports", `${result.scanId.replace(/[^A-Za-z0-9_.-]/g, "-")}.${extension}`);
   }
   mkdirSync(path.dirname(outputPath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${outputPath}.${process.pid}.tmp`;

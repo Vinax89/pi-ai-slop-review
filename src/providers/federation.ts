@@ -1,8 +1,10 @@
 import { DEFAULT_CONFIG, type AiSlopConfig } from "../core/config.ts";
 import { canonicalJson, fingerprint, mergeScanResults, sha256 } from "../core/schema.ts";
+import { rankFindings } from "../core/severity.ts";
 import { collectGraphEvidence } from "../graph/provider.ts";
 import { applyPolicy } from "../policy/engine.ts";
 import type { ScanResult, ScanScope } from "../types.ts";
+import type { TypeScriptProjectContext } from "../typescript-scanner.ts";
 import { importAnalyzerReports } from "./analyzer-reports.ts";
 import { importCoverageReports } from "./coverage.ts";
 import { collectDependencyProvenance } from "./dependencies.ts";
@@ -16,6 +18,7 @@ export interface FederationOptions {
   trustedProject?: boolean;
   graphStateRoot?: string;
   policyStateRoot?: string;
+  typescriptProjects?: TypeScriptProjectContext[];
 }
 
 export async function federateEvidence(
@@ -69,7 +72,7 @@ export async function federateEvidence(
     }
   }
   results.push(...(await collectLspEvidence(rootDir, paths, config, Boolean(options.trustedProject), signal)));
-  results.push(await collectGraphEvidence(rootDir, paths, config, signal, options.graphStateRoot, mode));
+  results.push(await collectGraphEvidence(rootDir, paths, config, signal, options.graphStateRoot, mode, options.typescriptProjects));
   if (seed.findings.some((finding) => finding.ruleId === "dependency.unresolved")) {
     results.push(await collectDependencyProvenance(rootDir, seed, config, signal));
   }
@@ -85,5 +88,22 @@ export async function federateEvidence(
     findings: merged.findings.map((finding) => finding.id),
     providers: merged.providers,
   });
-  return applyPolicy(rootDir, merged, config, options.policyStateRoot);
+  const reviewed = applyPolicy(rootDir, merged, config, options.policyStateRoot);
+  if (reviewed.findings.length > config.limits.maxFindings) {
+    const total = reviewed.findings.length;
+    reviewed.findings = rankFindings(reviewed.findings, reviewed.policyDecisions)
+      .slice(0, config.limits.maxFindings)
+      .map((item) => item.finding);
+    reviewed.skipped.push({
+      filePath: "<findings>",
+      reason: `${total - reviewed.findings.length} finding(s) omitted after the weighted-priority limit of ${config.limits.maxFindings}`,
+      providerId: "provider-federation",
+    });
+    reviewed.scanId = fingerprint("scan", {
+      inputScanId: reviewed.scanId,
+      findingLimit: config.limits.maxFindings,
+      findings: reviewed.findings.map((finding) => finding.id),
+    });
+  }
+  return reviewed;
 }

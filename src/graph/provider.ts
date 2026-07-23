@@ -1,10 +1,14 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+
 import type { AiSlopConfig } from "../core/config.ts";
 import { createScanResult, fingerprint } from "../core/schema.ts";
 import { offsetRange, safeProjectFile } from "../providers/files.ts";
-import { SCHEMA_VERSION, type EvidenceRecord, type FindingDraft, type ScanResult, type ScanScope, type SkippedFile } from "../types.ts";
+import { SCHEMA_VERSION, type EvidenceRecord, type FindingDraft, type ScanResult, type ScanScope, type SkippedFile, type SourceRange } from "../types.ts";
+import type { TypeScriptProjectContext } from "../typescript-scanner.ts";
 import { buildGraphFacts } from "./build.ts";
 import { GraphStore } from "./store.ts";
-import type { GraphNode, PublicSurfaceEntry } from "./types.ts";
+import type { GraphEdge, GraphNode, PublicSurfaceEntry } from "./types.ts";
 
 function matches(filePath: string, patterns: string[]): boolean {
   return patterns.some((pattern) => pathMatches(filePath, pattern));
@@ -36,25 +40,35 @@ function surfaceDelta(before: PublicSurfaceEntry[], after: PublicSurfaceEntry[])
   };
 }
 
+type SourceSnapshot = { source: string; sourceHash: string };
+
+function rangeForNode(rootDir: string, node: GraphNode, sources: Map<string, SourceSnapshot>): SourceRange | undefined {
+  const cached = sources.get(node.filePath);
+  if (cached) return offsetRange(node.filePath, cached.source, node.start, node.end, cached.sourceHash);
+  const file = safeProjectFile(rootDir, node.filePath);
+  return file ? offsetRange(node.filePath, file.source, node.start, node.end) : undefined;
+}
+
 function findingForNode(
   rootDir: string,
   node: GraphNode,
+  sources: Map<string, SourceSnapshot>,
   values: Omit<FindingDraft, "filePath" | "line" | "column" | "start" | "end" | "sourceHash" | "anchor"> & { anchor: string },
 ): FindingDraft | undefined {
-  const file = safeProjectFile(rootDir, node.filePath);
-  if (!file) return undefined;
-  return { ...offsetRange(node.filePath, file.source, node.start, node.end), ...values };
+  const range = rangeForNode(rootDir, node, sources);
+  return range ? { ...range, ...values } : undefined;
 }
 
 function evidenceForNode(
   rootDir: string,
   node: GraphNode,
+  sources: Map<string, SourceSnapshot>,
   summary: string,
   kind: EvidenceRecord["kind"],
   details: Record<string, unknown>,
 ): EvidenceRecord | undefined {
-  const file = safeProjectFile(rootDir, node.filePath);
-  if (!file) return undefined;
+  const source = rangeForNode(rootDir, node, sources);
+  if (!source) return undefined;
   return {
     schemaVersion: SCHEMA_VERSION,
     id: fingerprint("evidence", { nodeId: node.id, provider: "repository-graph", summary, details }),
@@ -63,7 +77,7 @@ function evidenceForNode(
     kind,
     summary,
     strength: "C2",
-    source: offsetRange(node.filePath, file.source, node.start, node.end),
+    source,
     details,
   };
 }
@@ -75,6 +89,7 @@ export async function collectGraphEvidence(
   signal?: AbortSignal,
   stateRoot?: string,
   mode: ScanScope["mode"] = "explicit",
+  reusableProjects: TypeScriptProjectContext[] = [],
 ): Promise<ScanResult> {
   if (!config.graph.enabled) {
     return createScanResult({
@@ -96,45 +111,71 @@ export async function collectGraphEvidence(
   const evidenceRecords: EvidenceRecord[] = [];
   const skipped: SkippedFile[] = [];
   try {
-    const built = await buildGraphFacts(rootDir, paths, config, signal);
+    const built = await buildGraphFacts(rootDir, paths, config, signal, reusableProjects);
+    const sources = new Map(
+      built.facts.flatMap((facts) => facts.source === undefined ? [] : [[facts.filePath, { source: facts.source, sourceHash: facts.sourceHash }] as const]),
+    );
     for (const [filePath, reason] of Object.entries(built.errors)) skipped.push({ filePath, reason, providerId: "repository-graph" });
-    for (const facts of built.facts) store.updateFile(facts);
+    const invalidFiles = Object.entries(built.errors)
+      .filter(([, reason]) => !/^Python graph scan (?:unavailable|aborted):?/.test(reason))
+      .map(([filePath]) => filePath);
+    const missingFiles = store.files().filter((filePath) => !existsSync(path.resolve(rootDir, filePath)));
+    store.removeFiles([...new Set([...invalidFiles, ...missingFiles])]);
+    store.updateFiles(built.facts);
     const reviewedFiles = built.facts.map((facts) => facts.filePath);
-    const reviewedNodes = reviewedFiles.flatMap((filePath) => store.nodes(filePath));
+    const reviewedFileSet = new Set(reviewedFiles);
+    const reviewedNodes = built.facts.flatMap((facts) => facts.nodes);
+    const reviewedNodeById = new Map(reviewedNodes.map((node) => [node.id, node]));
+    const rootNodeByFile = new Map(reviewedNodes.filter((node) => node.kind === "file" || node.kind === "specification").map((node) => [node.filePath, node]));
     const allEdges = store.edges();
+    const duplicateBodyGroups = store.duplicateBodyGroups();
+    const incomingByTarget = new Map<string, GraphEdge[]>();
+    for (const graphEdge of allEdges) {
+      const incoming = incomingByTarget.get(graphEdge.toId);
+      if (incoming) incoming.push(graphEdge);
+      else incomingByTarget.set(graphEdge.toId, [graphEdge]);
+    }
 
+    const reportedCloneGroups = new Set<string>();
     for (const node of reviewedNodes) {
       if (node.bodyHash && ["function", "class"].includes(node.kind)) {
-        const clones = store.clones(node.bodyHash).filter((candidate) => candidate.id !== node.id && candidate.kind === node.kind);
-        if (clones.length) {
-          const finding = findingForNode(rootDir, node, {
-            anchor: `duplicate:${node.id}`,
-            ruleId: "structure.duplicate-capability",
-            classification: "waste_candidate",
-            confidence: "C1",
-            risk: "R2",
-            maximumAction: "observe",
-            message: `'${node.qualifiedName}' has an exact normalized body match in ${clones.map((item) => `${item.filePath}:${item.qualifiedName}`).join(", ")}`,
-            evidence: ["repository graph found identical normalized function/class body hashes"],
-            counterEvidence: [],
-            unknown: ["duplicate bodies may intentionally implement separate contracts or boundaries"],
-          });
-          if (finding) findings.push(finding);
+        const cloneGroup = `${node.kind}:${node.bodyHash}`;
+        if (duplicateBodyGroups.has(cloneGroup) && !reportedCloneGroups.has(cloneGroup)) {
+          const clones = store.clones(node.bodyHash).filter((candidate) => candidate.id !== node.id && candidate.kind === node.kind);
+          if (clones.length) {
+            reportedCloneGroups.add(cloneGroup);
+            const examples = clones.slice(0, 5).map((item) => `${item.filePath}:${item.qualifiedName}`);
+            const omitted = clones.length - examples.length;
+            const finding = findingForNode(rootDir, node, sources, {
+              anchor: `duplicate:${cloneGroup}`,
+              ruleId: "structure.duplicate-capability",
+              classification: "waste_candidate",
+              confidence: "C1",
+              risk: "R2",
+              maximumAction: "observe",
+              message: `'${node.qualifiedName}' has an exact normalized body match in ${clones.length} other location(s): ${examples.join(", ")}${omitted ? ` (+${omitted} more)` : ""}`,
+              evidence: ["repository graph found identical normalized function/class body hashes"],
+              counterEvidence: [],
+              unknown: ["duplicate bodies may intentionally implement separate contracts or boundaries"],
+            });
+            if (finding) findings.push(finding);
+          }
         }
       }
 
       if (node.exported && ["function", "class", "variable"].includes(node.kind)) {
-        const callers = allEdges.filter((item) => item.toId === node.id && item.kind === "calls");
-        const tests = allEdges.filter((item) => item.toId === node.id && item.kind === "covers");
-        const governing = allEdges.filter((item) => item.toId === nodeIdForFile(node.filePath) && item.kind === "governs");
-        const impact = evidenceForNode(rootDir, node, `repository impact for exported '${node.qualifiedName}'`, "reference", {
+        const incoming = incomingByTarget.get(node.id) ?? [];
+        const callers = incoming.filter((item) => item.kind === "calls");
+        const tests = incoming.filter((item) => item.kind === "covers");
+        const governing = (incomingByTarget.get(nodeIdForFile(node.filePath)) ?? []).filter((item) => item.kind === "governs");
+        const impact = evidenceForNode(rootDir, node, sources, `repository impact for exported '${node.qualifiedName}'`, "reference", {
           callers: callers.map((item) => item.fromId),
           tests: tests.map((item) => item.fromId),
           governingSpecifications: governing.map((item) => item.fromId),
         });
         if (impact) evidenceRecords.push(impact);
         if (!tests.length && mode !== "repository") {
-          const finding = findingForNode(rootDir, node, {
+          const finding = findingForNode(rootDir, node, sources, {
             anchor: `tests:${node.id}`,
             ruleId: "assurance.no-linked-tests",
             classification: "assurance_gap",
@@ -151,21 +192,21 @@ export async function collectGraphEvidence(
       }
 
       if (node.kind === "registration") {
-        const registration = evidenceForNode(rootDir, node, `framework or runtime registration '${node.name}'`, "reference", node.metadata);
+        const registration = evidenceForNode(rootDir, node, sources, `framework or runtime registration '${node.name}'`, "reference", node.metadata);
         if (registration) evidenceRecords.push(registration);
       }
     }
 
-    for (const graphEdge of allEdges.filter((item) => item.kind === "imports" && reviewedFiles.includes(item.filePath))) {
-      const target = store.node(graphEdge.toId);
+    for (const graphEdge of allEdges.filter((item) => item.kind === "imports" && reviewedFileSet.has(item.filePath))) {
+      const target = reviewedNodeById.get(graphEdge.toId) ?? store.node(graphEdge.toId);
       if (!target) continue;
       const fromLayer = layerFor(graphEdge.filePath, config);
       const toLayer = layerFor(target.filePath, config);
       if (!fromLayer || !toLayer || fromLayer === toLayer) continue;
       if (config.graph.allowedEdges.includes(`${fromLayer}->${toLayer}`)) continue;
-      const sourceNode = store.nodes(graphEdge.filePath).find((item) => item.kind === "file");
+      const sourceNode = rootNodeByFile.get(graphEdge.filePath) ?? store.nodes(graphEdge.filePath).find((item) => item.kind === "file");
       if (!sourceNode) continue;
-      const finding = findingForNode(rootDir, sourceNode, {
+      const finding = findingForNode(rootDir, sourceNode, sources, {
         anchor: `architecture:${graphEdge.id}`,
         ruleId: "architecture.disallowed-dependency",
         classification: "context_conflict",

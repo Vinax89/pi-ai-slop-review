@@ -9,6 +9,12 @@ rules:
     claim: A module specifier cannot be resolved under the active project configuration.
     vetoes: [runtime-builtin, workspace-alias, optional-platform-import, type-checking-import, ambient-module, declared-dependency]
     maximum_action: observe
+    remediation_steps:
+      - Confirm the specifier is not a runtime builtin, optional import, ambient module, or valid workspace alias.
+      - Correct a typo, path alias, export map, or dependency declaration only when repository evidence identifies the intended module.
+      - Do not install a guessed package solely to silence the finding.
+    verification_steps:
+      - Run the project typecheck or module-resolution check and the smallest affected test set.
     sources: [hallucinated-packages-2024]
 
   - id: structure.pass-through-wrapper
@@ -20,6 +26,12 @@ rules:
     claim: A function forwards unchanged arguments and may add no behavior or boundary value.
     vetoes: [public-api, compatibility-alias, decorator, overload, explicit-return-contract, unresolved-target, this-bound-target, dependency-injection-seam, observability-boundary, non-call-reference]
     maximum_action: propose
+    remediation_steps:
+      - Inspect all callers, non-call references, exports, decorators, overloads, and compatibility contracts.
+      - If no boundary value remains, call the delegated target directly and remove only the redundant wrapper.
+      - If the wrapper is intentional, document or suppress the finding instead of deleting it.
+    verification_steps:
+      - Run typechecking, caller tests, and a public-surface comparison before proposing removal.
 
   - id: errors.suppressed
     scope: artifact
@@ -30,6 +42,12 @@ rules:
     claim: A catch clause is empty or only logs before control continues.
     vetoes: [typed-failure-outcome, outer-retry, intentional-best-effort-boundary]
     maximum_action: observe
+    remediation_steps:
+      - Confirm whether the catch is an intentional best-effort boundary, an outer retry participant, or a missing failure contract.
+      - Prefer explicit propagation, retry, or a typed failure outcome that callers must handle.
+      - Do not insert a throw without checking every caller and boundary contract.
+    verification_steps:
+      - Add or run a focused failure-path test and verify caller behavior.
 
   - id: data.hidden-catch-fallback
     scope: artifact
@@ -40,6 +58,12 @@ rules:
     claim: A catch clause converts failure into a safe-looking return value.
     vetoes: [typed-optional-outcome, visible-placeholder, documented-conservative-estimate, test-fixture]
     maximum_action: observe
+    remediation_steps:
+      - Trace consumers to determine whether missing data, a visible placeholder, or a typed optional result is the truthful contract.
+      - Replace the safe-looking fallback only with an explicit failure or missing-data outcome accepted by callers.
+      - Preserve documented conservative estimates and test fixtures when they are intentional.
+    verification_steps:
+      - Exercise the failure path and verify every affected user-facing or downstream value remains truthful.
 
   - id: structure.duplicate-capability
     scope: repository
@@ -50,6 +74,12 @@ rules:
     claim: Two functions or classes have the same normalized body and require contextual review.
     vetoes: [separate-contract, compatibility-boundary, generated-code, test-fixture]
     maximum_action: observe
+    remediation_steps:
+      - Compare contracts, side effects, dependency boundaries, and callers before choosing a canonical implementation.
+      - Redirect callers and remove a duplicate only after proving the implementations are behaviorally interchangeable.
+      - Keep separate implementations when they enforce distinct contracts or compatibility boundaries.
+    verification_steps:
+      - Run caller tests and verify the public surface before and after any consolidation.
 
   - id: assurance.no-linked-tests
     scope: repository
@@ -60,6 +90,11 @@ rules:
     claim: No static test edge was found for a changed exported symbol.
     vetoes: [dynamic-test, integration-coverage, external-consumer, coverage-evidence]
     maximum_action: observe
+    remediation_steps:
+      - Check dynamic, integration, external-consumer, and coverage evidence before declaring a test gap.
+      - If the gap is real, add one focused regression test for the exported behavior or failure mode.
+    verification_steps:
+      - Run the new or identified test and confirm it exercises the reported symbol.
 
   - id: architecture.disallowed-dependency
     scope: repository
@@ -70,3 +105,9 @@ rules:
     claim: A resolved import crosses a configured architecture boundary that is not allowlisted.
     vetoes: [documented-waiver, generated-code]
     maximum_action: observe
+    remediation_steps:
+      - Confirm the resolved import, configured layer mapping, and any documented architecture waiver.
+      - Move the dependency behind an allowed boundary or use an existing approved interface.
+      - Add an allowlist edge only through the project's architecture decision process.
+    verification_steps:
+      - Re-run the architecture audit and the affected integration tests.

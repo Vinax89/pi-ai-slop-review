@@ -19,7 +19,7 @@ pi -e npm:pi-ai-slop-review
 A version-tagged Git installation is also supported:
 
 ```bash
-pi install git:github.com/Vinax89/pi-ai-slop-review@v1.1.0
+pi install git:github.com/Vinax89/pi-ai-slop-review@v1.2.0
 ```
 
 Pi packages execute code with the user's privileges. Review the source and [`docs/security.md`](docs/security.md) before installation.
@@ -28,14 +28,15 @@ Pi packages execute code with the user's privileges. Review the source and [`doc
 
 - `/slop-review` reviews files changed through tracked `edit`, `write`, or `ctx_edit` calls in the current Pi session.
 - `/slop-review src/a.ts src/b.ts` reviews explicit project-relative files.
-- `/slop-audit` explicitly runs repository-wide review; ordinary review remains change-scoped.
+- `/slop-audit` explicitly runs repository-wide review of up to 10,000 supported files by default; TypeScript stages reuse project programs and Python helpers run in up to four bounded batches concurrently.
+- Every successful review or audit writes a weighted-severity Markdown report with evidence, possible remediation, and suggested verification to private extension state and prints its path.
 - `/slop-findings` opens the TUI finding picker; a finding ID prefix opens it directly.
 - `/slop-timeline` shows content-hash-valid mutations and verification freshness.
 - `/slop-claims <text>` checks deterministic completion claims against configured evidence.
 - `/slop-context <symbol-or-path>` queries callers, tests, specifications, and public-surface context.
 - `/slop-suppress`, `/slop-unsuppress`, and `/slop-feedback` manage reasoned local policy evidence.
 - `/slop-rules` reports policy decisions and calibrated rule health.
-- `/slop-export json|sarif [path]` exports the latest evidence; omitted paths use private extension state.
+- `/slop-export markdown|json|sarif [path]` exports the latest evidence; omitted paths use private extension state.
 - `/slop-diagnostics` and `/slop-config` explain runtime, trust, provider, and configuration state.
 - `/slop-lab` creates, validates, explicitly applies, or rolls back patch proposals. Validation uses separate baseline/candidate Git worktrees inside Bubblewrap with a separate network namespace, cleared environment, private HOME, and private `/tmp`.
 - `/slop-experiment` runs bounded pure-expression property, metamorphic, shadow, mutation, invariant, regression-generation, equality-saturation, and CEGIS checks.

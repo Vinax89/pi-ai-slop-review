@@ -1,12 +1,12 @@
 # Pi AI-Slop Review v1 completion audit
 
-Updated: 2026-07-23T14:38:06Z
+Updated: 2026-07-23T18:01:26Z
 
 ## Scope and conclusion
 
 This audit covers the v1 implementation in this package. The extension reviews concrete code-quality and assurance evidence; it does not infer AI authorship from style, metadata, names, comments, or architecture. Review is read-only and current-session scoped by default. Repository audit, project tools, network providers, critics, formal engines, and source application are explicit gated operations.
 
-The implementation is versioned `1.1.0`. Development and verification used only isolated fixtures outside reviewed user repositories.
+The implementation is versioned `1.2.0`. Development and verification used only isolated fixtures outside reviewed user repositories.
 
 ## Requirement-to-evidence map
 
@@ -20,7 +20,7 @@ The implementation is versioned `1.1.0`. Development and verification used only 
 | Provider federation | trusted LSP; SARIF; ESLint/Ruff/Pyright/Knip report adapters; LCOV/coverage.py; dependency provenance | malformed/oversized LSP, trust gates, scrubbed environment, SARIF escape, report normalization, malformed manifest, and network-off tests |
 | Repository context | incremental `node:sqlite` graph for symbols, calls, imports, exports, tests, specifications, layers, framework/package entry points, clones, impact, and public-surface deltas | graph tests cover TypeScript, Python, manifests, malformed manifests, architecture, tests/specs, clones, and incremental signatures |
 | Calibrated decisions | counterevidence vetoes, risk/action caps, suppressions, feedback, Wilson bounds, selective and conformal thresholds, abstention | policy and corpus tests; unsafe feedback disables authority |
-| Reviewer interfaces | 18 slash commands, eight agent tools, TUI finding picker, diagnostics/config, context, JSON/SARIF export | interface unit tests plus fresh Pi RPC registration/review and TUI `select` smoke inspection |
+| Reviewer interfaces | 18 slash commands, eight agent tools, TUI finding picker, diagnostics/config, context, weighted Markdown/JSON/SARIF export | interface unit tests plus fresh Pi RPC registration/review and TUI `select` smoke inspection |
 | Guarded patch laboratory | separate baseline/candidate Git worktrees, Bubblewrap network namespace, scrubbed environment, private HOME/tmp, allowlisted argv execution, source hash guards, rollback | lab tests cover isolation, injection resistance, stale hashes, explicit application, rollback, deletion, R3, critical paths, and trust |
 | Test amplification and bounded experiments | property/metamorphic/shadow checks, mutation score, regression generation, invariants, equality saturation, CEGIS, local retrieval, evidence-citing critics | experiment tests cover equivalence, counterexamples, unsupported syntax, citations, and repository-local retrieval |
 | Dynamic/formal adapters | gated SMT expression-equivalence and Alive2-compatible LLVM translation validation with declared assumptions/timeouts and abstention | adapter tests use allowlisted isolated commands and verify bounded verdict parsing |
