@@ -123,6 +123,7 @@ export default function (pi: any): void {
     if (!ledger || !loadedConfig || !store) throw new Error("AI-slop review is not initialized");
     const explicit = Boolean(requestedPaths?.length);
     const paths = explicit ? requestedPaths! : trackedPaths();
+    await new Promise<void>((resolve) => setImmediate(resolve));
     const result = await scanFiles(cwd, paths, signal, mode, {
       config: loadedConfig.config,
       configHash: loadedConfig.hash,
@@ -182,6 +183,8 @@ export default function (pi: any): void {
         ctx.ui.notify("No current-session supported file changes are tracked; pass explicit paths", "warning");
         return;
       }
+      ctx.ui.setStatus("ai-slop", `reviewing ${paths.length || trackedPaths().length} file(s)…`);
+      ctx.ui.notify("AI-slop review started…", "info");
       try {
         const outcome = await review(ctx.cwd, paths.length ? paths : undefined, ctx.signal);
         lastOutcome = outcome;
@@ -189,6 +192,7 @@ export default function (pi: any): void {
         ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} findings · ${outcome.delta.added.length} new`);
         ctx.ui.notify(`AI-slop review: ${resultSummary(outcome)}`, outcome.result.findings.length ? "warning" : "info");
       } catch (error) {
+        ctx.ui.setStatus("ai-slop", "review failed");
         ctx.ui.notify(`AI-slop review failed: ${(error as Error).message}`, "error");
       }
     },
@@ -203,6 +207,7 @@ export default function (pi: any): void {
         ctx.ui.notify("No supported repository files were found", "warning");
         return;
       }
+      ctx.ui.setStatus("ai-slop", `auditing ${discovery.paths.length} file(s)…`);
       ctx.ui.notify(`Auditing ${discovery.paths.length} file(s)${discovery.truncated ? " (configured limit reached)" : ""}...`, "info");
       try {
         const outcome = await review(ctx.cwd, discovery.paths, ctx.signal, "", "repository");
@@ -212,6 +217,7 @@ export default function (pi: any): void {
         ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} audit findings · ${outcome.delta.added.length} new`);
         ctx.ui.notify(`AI-slop audit: ${resultSummary(outcome)}`, outcome.result.findings.length ? "warning" : "info");
       } catch (error) {
+        ctx.ui.setStatus("ai-slop", "audit failed");
         ctx.ui.notify(`AI-slop audit failed: ${(error as Error).message}`, "error");
       }
     },

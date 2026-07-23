@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import * as ts from "typescript";
+
 import { scanTypeScriptFiles } from "../src/typescript-scanner.ts";
 
 function project(files: Record<string, string>, tsconfig: object = {}): string {
@@ -46,6 +48,26 @@ test("honors tsconfig path aliases", () => {
   assert.deepEqual(ruleIds(root, "src/input.ts"), []);
 });
 
+test("does not load unrelated project files for non-wrapper reviews", () => {
+  const root = project({
+    "input.ts": "export const value = 1;\n",
+    "unrelated.ts": "export const unrelated = 2;\n",
+  });
+  const unrelated = path.join(root, "unrelated.ts");
+  const reads = new Set<string>();
+  const readFile = ts.sys.readFile;
+  ts.sys.readFile = (fileName, encoding) => {
+    reads.add(path.resolve(fileName));
+    return readFile(fileName, encoding);
+  };
+  try {
+    scanTypeScriptFiles(root, ["input.ts"]);
+  } finally {
+    ts.sys.readFile = readFile;
+  }
+  assert.equal(reads.has(unrelated), false);
+});
+
 test("promotes local identity wrappers but caps exported wrappers", () => {
   const root = project({
     "input.ts": [
@@ -68,6 +90,18 @@ test("promotes local identity wrappers but caps exported wrappers", () => {
     ],
   );
   assert.match(wrappers[1].counterEvidence.join(" "), /exported/);
+});
+
+test("keeps project-wide call evidence for wrapper reviews", () => {
+  const root = project({
+    "input.ts": "function load(id: string) { return id; }\nexport function wrapper(id: string) { return load(id); }\n",
+    "caller.ts": "import { wrapper } from './input.js';\nwrapper('x');\n",
+  });
+  const wrapper = scanTypeScriptFiles(root, ["input.ts"]).findings.find(
+    (finding) => finding.ruleId === "structure.pass-through-wrapper",
+  );
+  assert.ok(wrapper);
+  assert.match(wrapper.evidence.join(" "), /1 direct call/);
 });
 
 test("distinguishes suppressed errors, hidden fallbacks, and rethrows", () => {

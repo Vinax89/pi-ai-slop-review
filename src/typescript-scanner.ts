@@ -57,7 +57,7 @@ function findProjectConfig(root: string, filePath: string): string | undefined {
   return undefined;
 }
 
-function createProject(files: string[], configPath?: string): Project {
+function createProject(files: string[], configPath?: string, includeProjectFiles = false): Project {
   let options: ts.CompilerOptions;
   let rootNames: string[];
   let configHasErrors = false;
@@ -72,7 +72,7 @@ function createProject(files: string[], configPath?: string): Project {
       const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, path.dirname(configPath));
       configHasErrors = parsed.errors.length > 0;
       options = { ...parsed.options, allowJs: true, noEmit: true };
-      rootNames = [...new Set([...parsed.fileNames, ...files])];
+      rootNames = includeProjectFiles ? [...new Set([...parsed.fileNames, ...files])] : files;
     }
   } else {
     options = defaultCompilerOptions();
@@ -194,6 +194,19 @@ function functionName(node: ts.Node): { node: ts.FunctionLikeDeclaration; name: 
     return { node: node.initializer, name: node.name };
   }
   return undefined;
+}
+
+function containsWrapperCandidate(filePath: string): boolean {
+  const sourceFile = ts.createSourceFile(filePath, readFileSync(filePath, "utf8"), ts.ScriptTarget.Latest, true);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    const candidate = functionName(node);
+    if (candidate && wrapperBody(candidate.node)) found = true;
+    else ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
 }
 
 function collectWrappers(project: Project, requestedFiles: Set<string>): WrapperCandidate[] {
@@ -511,7 +524,8 @@ export function scanTypeScriptFiles(rootDir: string, inputPaths: string[]): Scan
   }
 
   for (const [key, files] of groups) {
-    const project = createProject(files, key === "<none>" ? undefined : key);
+    // ponytail: only pay for a full project when wrapper reference evidence needs it.
+    const project = createProject(files, key === "<none>" ? undefined : key, files.some(containsWrapperCandidate));
     const hashes = new Map<string, string>();
     const validFiles = new Set<string>();
 

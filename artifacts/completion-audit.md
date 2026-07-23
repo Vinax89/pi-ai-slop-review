@@ -1,12 +1,12 @@
 # Pi AI-Slop Review v1 completion audit
 
-Generated: 2026-07-23T12:04:46Z
+Updated: 2026-07-23T14:38:06Z
 
 ## Scope and conclusion
 
 This audit covers the v1 implementation in this package. The extension reviews concrete code-quality and assurance evidence; it does not infer AI authorship from style, metadata, names, comments, or architecture. Review is read-only and current-session scoped by default. Repository audit, project tools, network providers, critics, formal engines, and source application are explicit gated operations.
 
-The implementation is versioned `1.0.0`. Development and verification used only isolated fixtures outside reviewed user repositories.
+The implementation is versioned `1.1.0`. Development and verification used only isolated fixtures outside reviewed user repositories.
 
 ## Requirement-to-evidence map
 
