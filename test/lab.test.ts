@@ -1,20 +1,24 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { DEFAULT_CONFIG, type AiSlopConfig } from "../src/core/config.ts";
+import { isExactConfiguredCommand, splitCommand } from "../src/core/execution.ts";
 import { applyProposal, createProposal, listLaboratory, rollbackProposal, validateProposal } from "../src/lab.ts";
 
-function repository(): { root: string; state: string; config: AiSlopConfig; command: string[] } {
+function repository(hostSecretPath?: string): { root: string; state: string; config: AiSlopConfig; command: string[] } {
   const root = mkdtempSync(path.join(tmpdir(), "ai-slop-lab-repo-"));
   const state = mkdtempSync(path.join(tmpdir(), "ai-slop-lab-state-"));
   writeFileSync(path.join(root, "input.txt"), "value=one\n");
+  const hostProbe = hostSecretPath
+    ? `try { fs.readFileSync(${JSON.stringify(hostSecretPath)}); throw new Error('host secret visible'); } catch (error) { if (error.message === 'host secret visible') throw error; }`
+    : "";
   writeFileSync(
     path.join(root, "verify.cjs"),
-    "const fs=require('node:fs'); if(process.env.AI_SLOP_SECRET) throw new Error('secret leaked'); if(!/^value=(one|two)$/.test(fs.readFileSync('input.txt','utf8').trim())) throw new Error('bad value'); console.log('secret=absent');\n",
+    `const fs=require('node:fs'); if(process.env.AI_SLOP_SECRET) throw new Error('secret leaked'); ${hostProbe} if(!/^value=(one|two)$/.test(fs.readFileSync('input.txt','utf8').trim())) throw new Error('bad value'); console.log('secret=absent host=hidden');\n`,
   );
   execFileSync("git", ["init", "-q"], { cwd: root });
   execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
@@ -32,8 +36,11 @@ function patch(): string {
   return "diff --git a/input.txt b/input.txt\n--- a/input.txt\n+++ b/input.txt\n@@ -1 +1 @@\n-value=one\n+value=two\n";
 }
 
-test("laboratory validates baseline and candidate in separate network-isolated, secret-scrubbed worktrees", async () => {
-  const { root, state, config, command } = repository();
+test("laboratory validates baseline and candidate without ambient host-secret access", async () => {
+  const secretDirectory = mkdtempSync(path.join(homedir(), ".ai-slop-host-secret-"));
+  const secretPath = path.join(secretDirectory, "secret.txt");
+  writeFileSync(secretPath, "must-not-be-readable\n");
+  const { root, state, config, command } = repository(secretPath);
   process.env.AI_SLOP_SECRET = "must-not-leak";
   try {
     const proposal = await createProposal(
@@ -69,6 +76,7 @@ test("laboratory validates baseline and candidate in separate network-isolated, 
     assert.equal(listLaboratory(root, state).proposals[0].status, "verified");
   } finally {
     delete process.env.AI_SLOP_SECRET;
+    rmSync(secretDirectory, { recursive: true, force: true });
   }
 });
 
@@ -137,11 +145,21 @@ test("application rejects stale hashes, file deletion, critical paths, and R3 pr
   await assert.rejects(() => applyProposal(critical.root, criticalProposal.id, critical.state), /critical-path/);
 });
 
-test("laboratory rejects untrusted execution and non-allowlisted commands before running", async () => {
+test("exact command authorization preserves empty arguments", () => {
+  assert.deepEqual(splitCommand("validator \"\""), ["validator", ""]);
+  assert.equal(isExactConfiguredCommand(["validator"], ["validator \"\""]), false);
+  assert.equal(isExactConfiguredCommand(["validator", ""], ["validator \"\""]), true);
+});
+
+test("laboratory rejects untrusted execution and commands outside exact configuration", async () => {
   const { root, state, config, command } = repository();
   await assert.rejects(
     () => createProposal(root, { patch: patch(), risk: "R2", proofObligations: ["check"], commands: [["sh", "-c", "true"]] }, config, state),
-    /not allowlisted/,
+    /not an exact execution\.commands entry/,
+  );
+  await assert.rejects(
+    () => createProposal(root, { patch: patch(), risk: "R2", proofObligations: ["check"], commands: [[...command, "--extra"]] }, config, state),
+    /not an exact execution\.commands entry/,
   );
   const proposal = await createProposal(root, { patch: patch(), risk: "R2", proofObligations: ["check"], commands: [command] }, config, state);
   await assert.rejects(() => validateProposal(root, proposal.id, config, false, undefined, state), /requires Pi project trust/);

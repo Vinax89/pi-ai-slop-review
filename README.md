@@ -19,7 +19,7 @@ pi -e npm:pi-ai-slop-review
 A version-tagged Git installation is also supported:
 
 ```bash
-pi install git:github.com/Vinax89/pi-ai-slop-review@v1.2.0
+pi install git:github.com/Vinax89/pi-ai-slop-review@v1.2.1
 ```
 
 Pi packages execute code with the user's privileges. Review the source and [`docs/security.md`](docs/security.md) before installation.
@@ -29,7 +29,7 @@ Pi packages execute code with the user's privileges. Review the source and [`doc
 - `/slop-review` reviews files changed through tracked `edit`, `write`, or `ctx_edit` calls in the current Pi session.
 - `/slop-review src/a.ts src/b.ts` reviews explicit project-relative files.
 - `/slop-audit` explicitly runs repository-wide review of up to 10,000 supported files by default; TypeScript stages reuse project programs and Python helpers run in up to four bounded batches concurrently.
-- Every successful review or audit writes a weighted-severity Markdown report with evidence, possible remediation, and suggested verification to private extension state and prints its path.
+- Every review or audit reports `complete`, `partial`, or `abstained`; incomplete results are never presented as clean. A weighted-severity Markdown report with evidence, possible remediation, and suggested verification is written to private extension state.
 - `/slop-findings` opens the TUI finding picker; a finding ID prefix opens it directly.
 - `/slop-timeline` shows content-hash-valid mutations and verification freshness.
 - `/slop-claims <text>` checks deterministic completion claims against configured evidence.
@@ -38,9 +38,9 @@ Pi packages execute code with the user's privileges. Review the source and [`doc
 - `/slop-rules` reports policy decisions and calibrated rule health.
 - `/slop-export markdown|json|sarif [path]` exports the latest evidence; omitted paths use private extension state.
 - `/slop-diagnostics` and `/slop-config` explain runtime, trust, provider, and configuration state.
-- `/slop-lab` creates, validates, explicitly applies, or rolls back patch proposals. Validation uses separate baseline/candidate Git worktrees inside Bubblewrap with a separate network namespace, cleared environment, private HOME, and private `/tmp`.
+- `/slop-lab` creates, validates, explicitly applies, or rolls back patch proposals. Validation uses exact configured commands in separate baseline/candidate Git worktrees inside Bubblewrap with no host-root mount, a separate network namespace, cleared environment, private HOME, and private `/tmp`.
 - `/slop-experiment` runs bounded pure-expression property, metamorphic, shadow, mutation, invariant, regression-generation, equality-saturation, and CEGIS checks.
-- `/slop-formal` runs explicitly enabled SMT expression equivalence or Alive2-compatible LLVM translation validation through allowlisted, network-isolated commands.
+- `/slop-formal` runs explicitly enabled SMT expression equivalence or Alive2-compatible LLVM translation validation through exact configured, network-isolated commands.
 - `/slop-retrieve` ranks local graph context without uploading source. `/slop-critics` is an opt-in remote advisory panel whose non-abstaining responses must cite existing deterministic evidence IDs.
 - The `slop_review`, `slop_context`, `slop_propose`, `slop_verify`, `slop_experiment`, `slop_formal`, `slop_retrieve`, and `slop_critics` tools expose the same capabilities to the agent. Agent tools never apply patches to the real checkout.
 
@@ -76,7 +76,7 @@ The extension keeps a branch-aware assurance ledger in Pi session entries and st
 
 An incremental SQLite context graph under `~/.pi/agent/ai-slop/graph/` records TypeScript and Python symbols, resolved calls/imports, public exports, framework registrations, package entry points, tests, coverage links, Markdown requirements, and specification links. It supplies public-surface changes, architecture-policy conflicts, exact-body clone observations, and test-impact evidence without storing source bodies.
 
-The extension never modifies reviewed code during review, installs dependencies, imports project modules, infers AI authorship from style, or automatically removes findings. Source application requires a verified laboratory run plus an explicit user `/slop-lab apply` confirmation and fresh source hashes; R3, file-deleting, and configured critical-path proposals are blocked. Network access, remote critics, formal engines, and project tool execution are disabled by default. Experimental results state their finite domains, semantics, assumptions, timeouts, and abstentions; sampled success or solver `unknown` is never called proof.
+The extension never modifies reviewed code during review, installs dependencies, imports project modules, infers AI authorship from style, or automatically removes findings. Source application requires a verified laboratory run plus an explicit user `/slop-lab apply` confirmation and fresh source hashes; R3, file-deleting, and configured critical-path proposals are blocked. Network access, remote critics, formal engines, and project tool execution are disabled by default. Experimental results state their finite domains, semantics, assumptions, timeouts, and abstentions; equality saturation is advisory, and only an exhausted declared domain—not sampled success or solver `unknown`—can verify a bounded expression experiment.
 
 ## Development and validation
 

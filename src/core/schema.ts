@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
+import { assessScanCompleteness } from "./completeness.ts";
 import { normalizePath } from "./paths.ts";
 import {
   SCHEMA_VERSION,
@@ -150,11 +151,15 @@ export function createScanResult(input: CreateScanResultInput): ScanResult {
       status: input.skipped.length && !scannedFiles.length ? "degraded" : "completed",
     },
   ];
+  const skipped = input.skipped.map((item) => ({ ...item, filePath: normalizePath(item.filePath) }));
+  const completeness = assessScanCompleteness({ scannedFiles, providers, skipped });
   const scanId = fingerprint("scan", {
     contentHash,
     engine: input.engine,
     findings: findings.map((item) => item.id),
-    providers: providers.map(({ id, version }) => ({ id, version })),
+    providers,
+    skipped,
+    completeness,
   });
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -175,7 +180,8 @@ export function createScanResult(input: CreateScanResultInput): ScanResult {
     suppressedFindings: [],
     policyDecisions: [],
     ruleHealth: [],
-    skipped: input.skipped.map((item) => ({ ...item, filePath: normalizePath(item.filePath) })),
+    skipped,
+    completeness,
   };
 }
 
@@ -192,9 +198,11 @@ export function mergeScanResults(rootDir: string, results: ScanResult[], mode: S
     ).values(),
   ];
   const contentHash = sha256(canonicalJson(results.map((result) => result.scope.contentHash).sort()));
+  const skipped = results.flatMap((result) => result.skipped);
+  const completeness = assessScanCompleteness({ scannedFiles, providers, skipped });
   return {
     schemaVersion: SCHEMA_VERSION,
-    scanId: fingerprint("scan", { contentHash, findings: findings.map((item) => item.id), providers }),
+    scanId: fingerprint("scan", { contentHash, findings: findings.map((item) => item.id), providers, skipped, completeness }),
     generatedAt: new Date().toISOString(),
     engine: "semantic-review",
     engineVersion: results
@@ -213,7 +221,8 @@ export function mergeScanResults(rootDir: string, results: ScanResult[], mode: S
     suppressedFindings: results.flatMap((result) => result.suppressedFindings),
     policyDecisions: results.flatMap((result) => result.policyDecisions),
     ruleHealth: results.flatMap((result) => result.ruleHealth),
-    skipped: results.flatMap((result) => result.skipped),
+    skipped,
+    completeness,
   };
 }
 
@@ -231,6 +240,7 @@ export function isScanResult(value: unknown): value is ScanResult {
     Array.isArray(candidate.suppressedFindings) &&
     Array.isArray(candidate.policyDecisions) &&
     Array.isArray(candidate.ruleHealth) &&
-    Array.isArray(candidate.skipped)
+    Array.isArray(candidate.skipped) &&
+    (candidate.completeness === undefined || ["complete", "partial", "abstained"].includes(candidate.completeness.status))
   );
 }

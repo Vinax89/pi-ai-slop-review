@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { SCHEMA_VERSION, type PersistedState } from "../types.ts";
+import { assessScanCompleteness } from "./completeness.ts";
 import { canonicalJson, sha256 } from "./schema.ts";
 
 function now(): string {
@@ -52,12 +53,17 @@ function validateState(value: unknown, repositoryId: string): PersistedState {
     evidenceScore: record.evidenceScore ?? 0,
     unsafe: record.unsafe ?? false,
   }));
-  for (const scan of Object.values(candidate.baselines ?? {})) {
+  const migrateScan = (scan: PersistedState["baselines"][string]): void => {
     scan.suppressedFindings ??= [];
     scan.policyDecisions ??= [];
     scan.ruleHealth ??= [];
+    scan.completeness ??= assessScanCompleteness(scan);
+  };
+  for (const scan of Object.values(candidate.baselines ?? {})) migrateScan(scan);
+  for (const session of Object.values(candidate.sessions ?? {})) {
+    session.claims ??= [];
+    for (const scan of session.scans ?? []) migrateScan(scan);
   }
-  for (const session of Object.values(candidate.sessions ?? {})) session.claims ??= [];
   if (
     !Number.isSafeInteger(candidate.revision) ||
     !candidate.sessions ||

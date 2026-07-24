@@ -124,6 +124,13 @@ export interface RuleHealth {
   status: "insufficient-data" | "healthy" | "observe-only" | "disabled";
 }
 
+export interface ScanCompleteness {
+  status: "complete" | "partial" | "abstained";
+  scannedFiles: number;
+  skippedItems: number;
+  reasons: string[];
+}
+
 export interface ScanResult {
   schemaVersion: SchemaVersion;
   scanId: string;
@@ -139,6 +146,7 @@ export interface ScanResult {
   policyDecisions: PolicyDecision[];
   ruleHealth: RuleHealth[];
   skipped: SkippedFile[];
+  completeness?: ScanCompleteness;
 }
 
 export interface Suppression {

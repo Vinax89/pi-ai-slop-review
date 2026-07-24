@@ -44,9 +44,21 @@
     "suppressedFindings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
     "policyDecisions": { "type": "array", "items": { "type": "object" } },
     "ruleHealth": { "type": "array", "items": { "type": "object" } },
-    "skipped": { "type": "array", "items": { "type": "object", "required": ["filePath", "reason"] } }
+    "skipped": { "type": "array", "items": { "type": "object", "required": ["filePath", "reason"] } },
+    "completeness": { "$ref": "#/$defs/completeness" }
   },
   "$defs": {
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "scannedFiles", "skippedItems", "reasons"],
+      "properties": {
+        "status": { "enum": ["complete", "partial", "abstained"] },
+        "scannedFiles": { "type": "integer", "minimum": 0 },
+        "skippedItems": { "type": "integer", "minimum": 0 },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "provider": {
       "type": "object",
       "required": ["id", "version", "capabilities", "status"],

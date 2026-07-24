@@ -59,6 +59,24 @@ test("imports SARIF findings and rejects out-of-project locations", async () => 
   assert.ok(result.skipped.some((item) => /no readable in-project/.test(item.reason)));
 });
 
+test("configured provider failures make the federated scan partial", async () => {
+  const directory = root();
+  writeFileSync(path.join(directory, "input.ts"), "const value = 1;\n");
+  writeFileSync(path.join(directory, "broken.sarif"), JSON.stringify({
+    version: "2.1.0",
+    runs: [{
+      tool: { driver: { name: "Broken" } },
+      results: [{ message: { text: "broken URI" }, locations: [{ physicalLocation: { artifactLocation: { uri: "%" } } }] }],
+    }],
+  }));
+  const settings = config();
+  settings.providers.sarif = ["broken.sarif"];
+  const result = await scanFiles(directory, ["input.ts"], undefined, "explicit", { config: settings });
+  assert.equal(result.completeness?.status, "partial");
+  assert.ok(result.providers.some((provider) => provider.id === "sarif" && provider.status === "failed"));
+  assert.ok(result.skipped.some((item) => item.filePath === "<sarif>"));
+});
+
 test("normalizes analyzer and coverage reports without applying upstream fixes", async () => {
   const directory = root();
   writeFileSync(path.join(directory, "input.ts"), "const unused = 1;\n");

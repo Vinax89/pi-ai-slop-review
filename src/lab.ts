@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 
 import type { AiSlopConfig } from "./core/config.ts";
+import { isExactConfiguredCommand, restrictedRuntime } from "./core/execution.ts";
 import { canonicalJson, fingerprint, sha256 } from "./core/schema.ts";
 import { StateStore } from "./core/store.ts";
 import { runExpressionExperiment } from "./experiments/expression.ts";
@@ -112,12 +113,6 @@ async function overlayWorkingChanges(rootDir: string, workspace: string): Promis
   }
 }
 
-function allowedCommand(command: string[], config: AiSlopConfig): boolean {
-  if (!command.length || command.some((part) => !part || part.includes("\0"))) return false;
-  const rendered = command.join(" ");
-  return config.execution.commands.some((allowed) => rendered === allowed || rendered.startsWith(`${allowed} `));
-}
-
 function dependencyMounts(rootDir: string, workspace: string, maxDepth = 4): Array<{ source: string; target: string }> {
   const mounts: Array<{ source: string; target: string }> = [];
   const queue: Array<{ directory: string; depth: number }> = [{ directory: rootDir, depth: 0 }];
@@ -149,15 +144,19 @@ async function runIsolated(
   config: AiSlopConfig,
   signal?: AbortSignal,
 ): Promise<LabCheck> {
-  if (!allowedCommand(command, config)) {
-    return { name: "command-allowlist", phase, command, succeeded: false, durationMs: 0, output: "command is not allowlisted in execution.commands" };
+  if (!isExactConfiguredCommand(command, config.execution.commands)) {
+    return { name: "command-allowlist", phase, command, succeeded: false, durationMs: 0, output: "command is not an exact execution.commands entry" };
   }
   const started = performance.now();
   const mounts = dependencyMounts(rootDir, workspace);
+  let runtime: ReturnType<typeof restrictedRuntime>;
+  try {
+    runtime = restrictedRuntime(command, workspace);
+  } catch (error) {
+    return { name: "restricted-runtime", phase, command, succeeded: false, durationMs: 0, output: error instanceof Error ? error.message : String(error) };
+  }
   const args = [
-    "--die-with-parent",
-    "--unshare-net",
-    "--ro-bind", "/", "/",
+    ...runtime.args,
     "--dev", "/dev",
     "--proc", "/proc",
     "--tmpfs", "/tmp",
@@ -165,7 +164,7 @@ async function runIsolated(
     "--bind", workspace, workspace,
     ...mounts.flatMap((mount) => ["--ro-bind", mount.source, mount.target]),
     "--clearenv",
-    "--setenv", "PATH", process.env.PATH ?? "/usr/bin:/bin",
+    "--setenv", "PATH", runtime.path,
     "--setenv", "HOME", "/tmp/home",
     "--setenv", "TMPDIR", "/tmp",
     "--setenv", "CI", "1",
@@ -234,7 +233,9 @@ export async function createProposal(
   if (Buffer.byteLength(input.patch) > config.lab.maxPatchBytes) throw new Error(`patch exceeds ${config.lab.maxPatchBytes} bytes`);
   if (!input.proofObligations.length || input.proofObligations.some((item) => !item.trim())) throw new Error("at least one explicit proof obligation is required");
   if (!input.commands.length || input.commands.length > config.lab.maxCommands) throw new Error(`one to ${config.lab.maxCommands} validation commands are required`);
-  for (const command of input.commands) if (!allowedCommand(command, config)) throw new Error(`command is not allowlisted: ${command.join(" ")}`);
+  for (const command of input.commands) {
+    if (!isExactConfiguredCommand(command, config.execution.commands)) throw new Error(`command is not an exact execution.commands entry: ${command.join(" ")}`);
+  }
   const parsed = parsePatchPaths(input.patch);
   const baseCommit = (await git(rootDir, ["rev-parse", "HEAD"])).trim();
   const fileHashes = Object.fromEntries(parsed.paths.map((filePath) => [filePath, fileHash(rootDir, filePath)]));

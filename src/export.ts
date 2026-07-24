@@ -1,6 +1,7 @@
-import { mkdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { assessScanCompleteness } from "./core/completeness.ts";
 import { isInside, nearestExistingParent } from "./core/paths.ts";
 import { canonicalJson } from "./core/schema.ts";
 import { rankFindings, SEVERITIES } from "./core/severity.ts";
@@ -9,6 +10,8 @@ import { loadRulePolicies, type ExecutableRulePolicy } from "./policy/rules.ts";
 import type { Finding, ScanResult } from "./types.ts";
 
 export type ExportFormat = "json" | "sarif" | "markdown";
+
+const PACKAGE_VERSION = String(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
 
 function sarifLevel(finding: Finding): "error" | "warning" | "note" {
   if (finding.classification === "defect" && finding.confidence !== "C1") return "error";
@@ -51,6 +54,7 @@ function sarifResult(finding: Finding, suppressed = false): Record<string, unkno
 }
 
 export function toSarif(result: ScanResult): Record<string, unknown> {
+  const completeness = result.completeness ?? assessScanCompleteness(result);
   const all = [...result.findings, ...result.suppressedFindings];
   const rules = [...new Set(all.map((finding) => finding.ruleId))].sort().map((ruleId) => ({
     id: ruleId,
@@ -65,12 +69,12 @@ export function toSarif(result: ScanResult): Record<string, unknown> {
         tool: {
           driver: {
             name: "Pi AI-Slop Review",
-            semanticVersion: "1.0.0",
+            semanticVersion: PACKAGE_VERSION,
             rules,
           },
         },
         automationDetails: { id: result.scanId },
-        invocations: [{ executionSuccessful: !result.providers.some((provider) => provider.status === "failed") }],
+        invocations: [{ executionSuccessful: completeness.status === "complete" }],
         results: [
           ...result.findings.map((finding) => sarifResult(finding)),
           ...result.suppressedFindings.map((finding) => sarifResult(finding, true)),
@@ -82,6 +86,7 @@ export function toSarif(result: ScanResult): Record<string, unknown> {
           providers: result.providers,
           policyDecisions: result.policyDecisions,
           ruleHealth: result.ruleHealth,
+          completeness,
         },
       },
     ],
@@ -122,6 +127,7 @@ function remediationFor(finding: Finding, policy?: ExecutableRulePolicy): { poss
 }
 
 export function toMarkdown(result: ScanResult): string {
+  const completeness = result.completeness ?? assessScanCompleteness(result);
   const rulePolicies = loadRulePolicies();
   const evidenceProviders = new Map(result.evidenceRecords.map((evidence) => [evidence.id, evidence.providerId]));
   const ranked = rankFindings(result.findings, result.policyDecisions);
@@ -142,6 +148,7 @@ export function toMarkdown(result: ScanResult): string {
     `| Active findings | ${result.findings.length} |`,
     `| Suppressed findings | ${result.suppressedFindings.length} |`,
     `| Skipped files | ${result.skipped.length} |`,
+    `| Completeness | ${markdownText(completeness.status)} |`,
     "",
     "## Weighted Severity",
     "",
@@ -162,6 +169,9 @@ export function toMarkdown(result: ScanResult): string {
     "",
   ];
 
+  if (completeness.reasons.length) {
+    lines.push("> **Incomplete review:** This result must not be interpreted as a clean scan.", "", ...completeness.reasons.map((reason) => `- ${markdownText(reason)}`), "");
+  }
   if (!ranked.length) lines.push("## Findings", "", "_No active findings._", "");
   let findingNumber = 0;
   for (const severity of SEVERITIES) {

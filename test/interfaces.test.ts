@@ -76,6 +76,7 @@ test("JSON and SARIF exports are schema-shaped, atomic, and SARIF-importable", (
   assert.equal(isScanResult(JSON.parse(readFileSync(jsonPath, "utf8"))), true);
   const sarif = toSarif(result) as any;
   assert.equal(sarif.version, "2.1.0");
+  assert.equal(sarif.runs[0].tool.driver.semanticVersion, JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
   assert.equal(sarif.runs[0].results.length, 1);
   const sarifPath = writeExport(root, result, "sarif", "reports/result.sarif.json");
   const markdownPath = writeExport(root, result, "markdown", "reports/findings.md");
@@ -85,6 +86,58 @@ test("JSON and SARIF exports are schema-shaped, atomic, and SARIF-importable", (
   assert.match(imported.findings[0].ruleId, /test\.rule/);
   assert.doesNotThrow(() => JSON.parse(readFileSync(new URL("../schema/scan-result.schema.json", import.meta.url), "utf8")));
   assert.doesNotThrow(() => JSON.parse(readFileSync(new URL("../schema/config.schema.json", import.meta.url), "utf8")));
+});
+
+test("scan completeness distinguishes complete, partial, and abstained outcomes", () => {
+  const root = fixture();
+  const complete = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [],
+    skipped: [],
+  });
+  assert.equal(complete.completeness?.status, "complete");
+  const partial = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    providers: [{ id: "test", version: "1", capabilities: [], status: "failed", diagnostic: "fixture failure" }],
+    scannedFiles: ["input.ts"],
+    findings: [],
+    skipped: [],
+  });
+  assert.equal(partial.completeness?.status, "partial");
+  assert.match(toMarkdown(partial), /must not be interpreted as a clean scan/);
+  assert.equal((toSarif(partial) as any).runs[0].invocations[0].executionSuccessful, false);
+  const abstained = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: [],
+    findings: [],
+    skipped: [{ filePath: "unsupported.rb", reason: "unsupported extension" }],
+  });
+  assert.equal(abstained.completeness?.status, "abstained");
+  const disabled = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "repository-graph",
+    providerVersion: "1",
+    providers: [{ id: "repository-graph", version: "1", capabilities: [], status: "skipped", diagnostic: "disabled by configuration" }],
+    scannedFiles: ["input.ts"],
+    findings: [],
+    skipped: [{ filePath: "<graph>", reason: "repository graph is disabled by configuration" }],
+  });
+  assert.equal(disabled.completeness?.status, "complete");
 });
 
 test("Markdown reports rank findings by weighted severity and retain review evidence", () => {

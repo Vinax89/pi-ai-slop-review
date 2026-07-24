@@ -58,6 +58,7 @@ test("scan results are versioned and content addressed", () => {
   assert.ok(result.scanId.startsWith("scan:"));
   assert.equal(result.scope.paths[0], "src/input.ts");
   assert.equal(result.evidenceRecords.length, 1);
+  assert.equal(result.completeness?.status, "complete");
   assert.equal(isScanResult(result), true);
 });
 
@@ -96,6 +97,17 @@ test("state store recovers from a corrupt live file and migrates additive v1 fie
 
   const migrationRoot = mkdtempSync(path.join(tmpdir(), "ai-slop-state-migration-"));
   const migrationStore = new StateStore(root, migrationRoot);
+  const legacyScan = createScanResult({
+    engine: "semantic-review",
+    engineVersion: "test",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [],
+    skipped: [],
+  });
+  delete (legacyScan as Partial<typeof legacyScan>).completeness;
   mkdirSync(migrationStore.directory, { recursive: true });
   writeFileSync(migrationStore.statePath, JSON.stringify({
     schemaVersion: 1,
@@ -106,11 +118,12 @@ test("state store recovers from a corrupt live file and migrates additive v1 fie
     sessions: {},
     suppressions: [],
     feedback: [],
-    baselines: {},
+    baselines: { main: legacyScan },
   }));
   const migrated = migrationStore.load();
   assert.deepEqual(migrated.proposals, []);
   assert.deepEqual(migrated.labRuns, []);
+  assert.equal(migrated.baselines.main.completeness?.status, "complete");
 });
 
 test("state store refuses a lock owned by a live process", () => {

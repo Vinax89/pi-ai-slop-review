@@ -1,5 +1,6 @@
+import { assessScanCompleteness } from "../core/completeness.ts";
 import { DEFAULT_CONFIG, type AiSlopConfig } from "../core/config.ts";
-import { canonicalJson, fingerprint, mergeScanResults, sha256 } from "../core/schema.ts";
+import { canonicalJson, createScanResult, fingerprint, mergeScanResults, sha256 } from "../core/schema.ts";
 import { rankFindings } from "../core/severity.ts";
 import { collectGraphEvidence } from "../graph/provider.ts";
 import { applyPolicy } from "../policy/engine.ts";
@@ -69,6 +70,18 @@ export async function federateEvidence(
     if (output.result) {
       output.result.providers = [output.run];
       results.push(output.result);
+    } else if (output.run.status === "failed") {
+      results.push(createScanResult({
+        engine: "provider-federation",
+        engineVersion: `${provider.id} failed`,
+        rootDir,
+        providerId: provider.id,
+        providerVersion: provider.version,
+        providers: [output.run],
+        scannedFiles: [],
+        findings: [],
+        skipped: [{ filePath: `<${provider.id}>`, reason: output.run.diagnostic ?? "provider failed", providerId: provider.id }],
+      }));
     }
   }
   results.push(...(await collectLspEvidence(rootDir, paths, config, Boolean(options.trustedProject), signal)));
@@ -105,5 +118,11 @@ export async function federateEvidence(
       findings: reviewed.findings.map((finding) => finding.id),
     });
   }
+  reviewed.completeness = assessScanCompleteness(reviewed);
+  reviewed.scanId = fingerprint("scan", {
+    inputScanId: reviewed.scanId,
+    completeness: reviewed.completeness,
+    skipped: reviewed.skipped,
+  });
   return reviewed;
 }

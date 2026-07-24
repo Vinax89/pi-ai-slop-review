@@ -21,7 +21,7 @@ Paths are canonicalized and confined to the repository. Symlink escapes, non-reg
 
 ## Process controls
 
-LSP commands and validation commands use argument arrays with `shell: false`, output/time limits, cancellation, and explicit allowlists. LSP receives a reduced environment. Patch and formal validation use Bubblewrap with `--unshare-net`, `--clearenv`, read-only host mounts, a private HOME, and private `/tmp`. If Bubblewrap or trust is unavailable, validation abstains.
+LSP commands and validation commands use argument arrays with `shell: false`, output/time limits, and cancellation. Validation and formal tools accept only exact configured command arrays; an approved command cannot acquire extra arguments. LSP receives a reduced environment. Patch and formal validation use Bubblewrap without mounting the host root: only system runtime paths, the exact configured executable, explicit worktrees/dependency directories, and declared temporary inputs are visible. The process also receives separate network, PID, IPC, and UTS namespaces, a cleared environment, private HOME, and private `/tmp`. If the exact runtime, Bubblewrap, or trust is unavailable, validation abstains.
 
 ## Patch controls
 
@@ -37,4 +37,4 @@ Registry queries use fixed HTTPS npm, PyPI, and OpenSSF endpoints, bounded respo
 
 ## Residual limitations
 
-Static graphs cannot disprove reflection or dynamic registration. Tests cannot prove general equivalence. Bounded/sampled experiments apply only to their documented domain. LSP servers and explicitly allowlisted project commands remain trusted-code execution and therefore require Pi project trust.
+Static graphs cannot disprove reflection or dynamic registration. Tests cannot prove general equivalence. Bounded experiments apply only to their declared finite domain; sampled runs and equality saturation are advisory. LSP servers and exact configured project commands remain trusted-code execution and therefore require Pi project trust. Project dependency directories explicitly mounted for validation remain readable inside that isolated run.

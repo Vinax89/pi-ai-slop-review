@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
+import { assessScanCompleteness } from "./src/core/completeness.ts";
 import { loadConfig, type LoadedConfig } from "./src/core/config.ts";
 import { discoverRepositoryFiles } from "./src/core/discovery.ts";
+import { splitCommand as splitCommandPaths } from "./src/core/execution.ts";
 import { rankFindings, weightedSeverity } from "./src/core/severity.ts";
 import { AssuranceLedger, diffScans, type ScanDelta, type VerificationStatus } from "./src/core/ledger.ts";
 import { StateStore } from "./src/core/store.ts";
@@ -38,14 +40,9 @@ interface ReviewOutcome {
   reportPath?: string;
 }
 
-function splitCommandPaths(args: string): string[] {
-  return (args.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [])
-    .map((value) => value.replace(/^"|"$/g, ""))
-    .filter(Boolean);
-}
-
 function resultSummary(outcome: ReviewOutcome): string {
-  return `${outcome.result.findings.length} finding(s), ${outcome.result.scannedFiles.length} scanned, ${outcome.result.skipped.length} skipped; ${outcome.delta.added.length} new`;
+  const completeness = outcome.result.completeness ?? assessScanCompleteness(outcome.result);
+  return `${completeness.status}: ${outcome.result.findings.length} finding(s), ${outcome.result.scannedFiles.length} scanned, ${outcome.result.skipped.length} skipped; ${outcome.delta.added.length} new`;
 }
 
 function reviewText(outcome: ReviewOutcome, maxFindings: number): string {
@@ -542,7 +539,7 @@ export default function (pi: any): void {
         return;
       }
       if (!loadedConfig!.config.execution.commands.length) {
-        ctx.ui.notify("Configure an allowlisted solver/validator command first", "warning");
+        ctx.ui.notify("Configure an exact solver/validator command first", "warning");
         return;
       }
       const selected = await ctx.ui.select("Formal engine command", loadedConfig!.config.execution.commands);
@@ -681,7 +678,7 @@ export default function (pi: any): void {
     promptSnippet: "Validate a concrete patch without mutating the working tree",
     promptGuidelines: [
       "Only propose the smallest patch supported by findings and repository context.",
-      "Supply structured allowlisted commands and explicit proof obligations; this tool never applies the patch.",
+      "Select exact configured commands and explicit proof obligations; this tool never applies the patch.",
     ],
     parameters: Type.Object({
       patch: Type.String({ description: "Standard unified diff with diff --git headers" }),

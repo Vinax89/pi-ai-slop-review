@@ -49,6 +49,18 @@ test("equality saturation closes commutative and associative rewrite classes", (
   assert.equal(result.equalitySaturation.equivalent, true);
 });
 
+test("equality saturation remains advisory when the configured domain is not exhausted", () => {
+  const result = runExpressionExperiment(spec({
+    original: "(x + 1) + 2",
+    candidate: "x + (2 + 1)",
+    variables: [{ name: "x", type: "integer", minimum: 0, maximum: 100 }],
+    maximumCases: 100,
+  }));
+  assert.equal(result.equalitySaturation.equivalent, true);
+  assert.equal(result.status, "inconclusive");
+  assert.equal(result.bounded, true);
+});
+
 test("counterexamples become bounded regression cases", () => {
   const result = runExpressionExperiment(spec({ original: "x + 1", candidate: "x + 2" }));
   assert.equal(result.status, "refuted");
@@ -78,7 +90,7 @@ test("unsupported or unsafe expression syntax abstains explicitly", () => {
   assert.equal(result.cases, 0);
 });
 
-test("SMT and translation-validation adapters are feature-gated, allowlisted, isolated, and parse bounded verdicts", async () => {
+test("SMT and translation-validation adapters require exact configured commands and parse bounded verdicts", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "ai-slop-formal-"));
   const smtServer = path.join(directory, "smt.cjs");
   const aliveServer = path.join(directory, "alive.cjs");
@@ -100,6 +112,9 @@ test("SMT and translation-validation adapters are feature-gated, allowlisted, is
   const blocked = await runSmtEquivalence(spec(), smtCommand, config, false);
   assert.equal(blocked.status, "abstained");
   assert.match(blocked.output, /project trust/);
+  const extended = await runSmtEquivalence(spec(), [...smtCommand, "--extra"], config, true);
+  assert.equal(extended.status, "abstained");
+  assert.match(extended.output, /exact execution\.commands entry/);
 });
 
 test("repository-aware retrieval ranks local graph context without remote source disclosure", async () => {

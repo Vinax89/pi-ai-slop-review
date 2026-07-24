@@ -13,7 +13,7 @@ Global: `~/.pi/agent/ai-slop/config.json` or `PI_AI_SLOP_CONFIG`.
 
 Project: `.pi/ai-slop.json`, read only when Pi trusts the project.
 
-Network, LSP execution, validation commands, remote critics, SMT, and translation validation require explicit configuration. `/slop-config` displays the effective non-secret configuration; `/slop-diagnostics` checks providers and stores.
+Network, LSP execution, validation commands, remote critics, SMT, and translation validation require explicit configuration. Validation/formal commands must match a configured `execution.commands` entry exactly; suffix arguments are not authorized. Restricted execution exposes system runtimes, the exact executable, declared worktrees/dependencies, and explicit temporary inputs—not the host root. `/slop-config` displays the effective non-secret configuration; `/slop-diagnostics` checks providers and stores.
 
 ## Lifecycle
 

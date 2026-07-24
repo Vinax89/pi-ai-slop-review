@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-23T18:02:11.095Z",
+  "generatedAt": "2026-07-24T00:59:39.638Z",
   "runtime": "v24.18.0",
   "fixture": {
     "files": 40,
@@ -7,12 +7,12 @@
     "graphResults": 1
   },
   "measurements": {
-    "coldScanMs": 756.71,
-    "warmScanP50Ms": 470.16,
-    "warmScanP95Ms": 484.69,
-    "graphQueryMs": 1.79,
-    "rssHighWaterDeltaMiB": 278.58,
-    "heapUsedDeltaMiB": 6.78
+    "coldScanMs": 741.54,
+    "warmScanP50Ms": 467.2,
+    "warmScanP95Ms": 471.2,
+    "graphQueryMs": 1.97,
+    "rssHighWaterDeltaMiB": 277.85,
+    "heapUsedDeltaMiB": 6.9
   },
   "targets": {
     "changedFileWarmP95Ms": 2000,

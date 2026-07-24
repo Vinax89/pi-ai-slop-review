@@ -431,6 +431,7 @@ export function runExpressionExperiment(spec: ExperimentSpec): ExperimentResult 
     "JavaScript-like strict equality and finite-number arithmetic",
     "integer domains are explicit and contain at most 101 values per variable",
     "division or modulo by zero is modeled as an error",
+    "equality saturation is advisory and never establishes verification authority",
   ];
   try {
     const original = parse(spec.original);
@@ -489,7 +490,7 @@ export function runExpressionExperiment(spec: ExperimentSpec): ExperimentResult 
     const equivalentCases = counterexamples.length === 0 && !relationFailures;
     const status: ExperimentResult["status"] = !equivalentCases
       ? "refuted"
-      : saturationEquivalent || generated.exhaustive
+      : generated.exhaustive
         ? "verified"
         : "inconclusive";
     const simplified = cheapest(originalClass.values());
@@ -501,7 +502,7 @@ export function runExpressionExperiment(spec: ExperimentSpec): ExperimentResult 
       id: fingerprint("experiment", { spec, status, counterexamples }),
       specId: spec.id,
       status,
-      bounded: !saturationEquivalent,
+      bounded: true,
       cases: generated.values.length,
       counterexamples,
       generatedRegressionCases,

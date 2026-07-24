@@ -31,11 +31,6 @@ function overlaps(finding: Finding, evidence: EvidenceRecord): boolean {
   return evidence.source.end >= finding.start && evidence.source.start <= finding.end;
 }
 
-function providersFor(finding: Finding, evidence: EvidenceRecord[]): string[] {
-  const direct = new Set(finding.evidenceIds);
-  return [...new Set(evidence.filter((item) => direct.has(item.id) || overlaps(finding, item)).map((item) => item.providerId))];
-}
-
 function contextCounterevidence(finding: Finding, evidence: EvidenceRecord[]): string[] {
   const counter: string[] = [];
   const overlapping = evidence.filter((item) => overlaps(finding, item));
@@ -65,11 +60,10 @@ function contextCounterevidence(finding: Finding, evidence: EvidenceRecord[]): s
   return counter;
 }
 
-function score(finding: Finding, providerIds: string[]): number {
+function score(finding: Finding): number {
   const base: Record<FindingConfidence, number> = { C1: 0.4, C2: 0.7, C3: 0.95 };
-  const independentBonus = Math.min(0.15, Math.max(0, providerIds.length - 1) * 0.05);
   const counterPenalty = Math.min(0.6, finding.counterEvidence.length * 0.2);
-  return Math.max(0, Math.min(1, base[finding.confidence] + independentBonus - counterPenalty));
+  return Math.max(0, Math.min(1, base[finding.confidence] - counterPenalty));
 }
 
 function actionThreshold(risk: Finding["risk"]): number {
@@ -197,7 +191,6 @@ export function applyPolicy(
       });
       continue;
     }
-    const providerIds = providersFor(original, input.evidenceRecords);
     const discoveredCounterevidence = contextCounterevidence(original, input.evidenceRecords);
     const finding: Finding = {
       ...original,
@@ -224,7 +217,7 @@ export function applyPolicy(
       finding.maximumAction = capAction(finding.maximumAction, "observe");
       reasons.push("R3 findings require manual review");
     }
-    const evidenceScore = score(finding, providerIds);
+    const evidenceScore = score(finding);
     const ruleHealth = healthByRule.get(finding.ruleId);
     const calibratedThreshold = Math.max(
       actionThreshold(finding.risk),
@@ -330,7 +323,7 @@ export function recordFeedback(
     findingConfidence: finding.confidence,
     maximumAction: finding.maximumAction,
     providerIds: [...new Set(providerIds)],
-    evidenceScore: score(finding, providerIds),
+    evidenceScore: score(finding),
     unsafe,
   };
   store.update((state) => {

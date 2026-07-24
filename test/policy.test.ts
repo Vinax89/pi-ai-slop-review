@@ -81,6 +81,22 @@ test("policy preserves eligible proposals but caps unregistered rules", () => {
   assert.match(capped.policyDecisions[0].reasons.join(" "), /unregistered/);
 });
 
+test("provider count does not raise evidence authority without proven independence", () => {
+  const { root, state } = fixture();
+  const corroboration: EvidenceRecord = {
+    schemaVersion: SCHEMA_VERSION,
+    id: fingerprint("evidence", "corroboration"),
+    providerId: "second-provider",
+    providerVersion: "1",
+    kind: "reference",
+    summary: "overlapping observation",
+    strength: "C2",
+    source: { filePath: "input.ts", line: 1, column: 1, start: 0, end: 58, sourceHash: "hash" },
+  };
+  const reviewed = applyPolicy(root, result(root, wrapper(), [corroboration]), DEFAULT_CONFIG, state);
+  assert.equal(reviewed.policyDecisions[0].evidenceScore, 0.7);
+});
+
 test("repository counterevidence vetoes a wrapper proposal", () => {
   const { root, state } = fixture();
   const registration: EvidenceRecord = {

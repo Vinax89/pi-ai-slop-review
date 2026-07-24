@@ -1,3 +1,4 @@
+import { assessScanCompleteness } from "./core/completeness.ts";
 import type { ScanDelta, VerificationStatus } from "./core/ledger.ts";
 import { rankFindings, type RankedFinding } from "./core/severity.ts";
 import type { ClaimAssessment, LedgerEvent, ScanResult } from "./types.ts";
@@ -13,13 +14,15 @@ function formatFinding(item: RankedFinding): string {
 }
 
 export function formatReport(result: ScanResult, maxFindings = 100): string {
+  const completeness = result.completeness ?? assessScanCompleteness(result);
   const shown = rankFindings(result.findings, result.policyDecisions).slice(0, maxFindings);
   const lines = [
-    `AI-slop review (read-only): ${result.findings.length} active finding(s), ${result.suppressedFindings.length} suppressed, in ${result.scannedFiles.length} file(s)`,
+    `AI-slop review (read-only, ${completeness.status}): ${result.findings.length} active finding(s), ${result.suppressedFindings.length} suppressed, in ${result.scannedFiles.length} file(s)`,
     `Engine: ${result.engine} ${result.engineVersion}`,
     `Providers: ${result.providers.map((provider) => `${provider.id}@${provider.version}:${provider.status}`).join(", ")}`,
     `Scan: ${result.scanId} (${result.scope.mode}, ${result.scope.contentHash.slice(0, 12)})`,
   ];
+  if (completeness.reasons.length) lines.push(`Completeness: ${completeness.reasons.join("; ")}`);
   if (shown.length) lines.push("", ...shown.map(formatFinding));
   if (result.findings.length > shown.length) lines.push("", `${result.findings.length - shown.length} finding(s) omitted`);
   if (result.policyDecisions.some((decision) => decision.reasons.length)) {

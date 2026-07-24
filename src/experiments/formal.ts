@@ -3,17 +3,14 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import type { AiSlopConfig } from "../core/config.ts";
+import { isExactConfiguredCommand, restrictedRuntime } from "../core/execution.ts";
 import { fingerprint } from "../core/schema.ts";
 import { SCHEMA_VERSION, type ExperimentSpec, type FormalVerificationResult } from "../types.ts";
 import { expressionEquivalenceSmt } from "./expression.ts";
 
-function allowed(command: string[], config: AiSlopConfig): boolean {
-  const rendered = command.join(" ");
-  return command.length > 0 && config.execution.commands.some((entry) => rendered === entry || rendered.startsWith(`${entry} `));
-}
-
 function isolatedStdin(command: string[], input: string, config: AiSlopConfig, signal?: AbortSignal): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
+    const runtime = restrictedRuntime(command);
     const hiddenFiles = command.filter((part) => path.isAbsolute(part) && part.startsWith(`${path.resolve("/tmp")}${path.sep}`) && existsSync(part));
     const hiddenDirectories = [...new Set(hiddenFiles.flatMap((filePath) => {
       const directories: string[] = [];
@@ -25,12 +22,12 @@ function isolatedStdin(command: string[], input: string, config: AiSlopConfig, s
       return directories;
     }))].sort((left, right) => left.length - right.length);
     const args = [
-      "--die-with-parent", "--unshare-net", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+      ...runtime.args, "--dev", "/dev", "--proc", "/proc",
       "--tmpfs", "/tmp", "--dir", "/tmp/home",
       ...hiddenDirectories.flatMap((directory) => ["--dir", directory]),
       ...hiddenFiles.flatMap((filePath) => ["--ro-bind", filePath, filePath]),
       "--clearenv",
-      "--setenv", "PATH", process.env.PATH ?? "/usr/bin:/bin", "--setenv", "HOME", "/tmp/home", "--setenv", "TMPDIR", "/tmp",
+      "--setenv", "PATH", runtime.path, "--setenv", "HOME", "/tmp/home", "--setenv", "TMPDIR", "/tmp",
       "--", ...command,
     ];
     const child = spawn("bwrap", args, { shell: false, stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH } });
@@ -74,7 +71,7 @@ export async function runSmtEquivalence(
   const assumptions = ["SMT-LIB integer/boolean semantics", "side-effect-free expressions", "solver command runs in a network-isolated, secret-scrubbed Bubblewrap process"];
   if (!config.experiments.smt) return abstained("smt", "SMT experiment is disabled", assumptions);
   if (!trustedProject || !config.execution.trusted) return abstained("smt", "SMT execution requires project trust and execution.trusted", assumptions);
-  if (!allowed(command, config)) return abstained("smt", "SMT command is not allowlisted", assumptions);
+  if (!isExactConfiguredCommand(command, config.execution.commands)) return abstained("smt", "SMT command is not an exact execution.commands entry", assumptions);
   try {
     const script = expressionEquivalenceSmt(spec);
     const result = await isolatedStdin(command, script, config, signal);
@@ -108,7 +105,7 @@ export async function runTranslationValidation(
   ];
   if (!config.experiments.translationValidation) return abstained("translation-validation", "translation validation experiment is disabled", assumptions);
   if (!trustedProject || !config.execution.trusted) return abstained("translation-validation", "translation validation requires project trust and execution.trusted", assumptions);
-  if (!allowed(command, config)) return abstained("translation-validation", "translation validator command is not allowlisted", assumptions);
+  if (!isExactConfiguredCommand(command, config.execution.commands)) return abstained("translation-validation", "translation validator command is not an exact execution.commands entry", assumptions);
   if (Buffer.byteLength(llvmTransformation) > 2 * 1024 * 1024) return abstained("translation-validation", "LLVM transformation exceeds 2 MiB", assumptions);
   try {
     const result = await isolatedStdin(command, llvmTransformation, config, signal);

@@ -6,10 +6,10 @@ Pi AI-Slop Review is an evidence federation and verification extension. It repor
 
 1. Pi `tool_call` and `tool_result` hooks record content-hash-valid mutations and configured verification runs.
 2. Session or explicit paths enter the native TypeScript and isolated Python scanners.
-3. Trusted/configured LSP, SARIF, analyzer-report, coverage, dependency-provenance, and repository-graph providers add independent evidence.
+3. Trusted/configured LSP, SARIF, analyzer-report, coverage, dependency-provenance, and repository-graph providers add attributed evidence; provider count alone never raises authority.
 4. The policy engine loads executable limits from `library/rules.yaml`, searches for counterevidence, applies hard risk/action caps, checks local suppressions and rule health, and abstains when evidence is insufficient.
-5. Commands, tools, TUI entries, JSON, and SARIF expose the result.
-6. Patch proposals execute only in separate baseline and candidate Git worktrees. Validation commands run in Bubblewrap with a separate network namespace, cleared environment, private HOME, and private `/tmp`.
+5. Commands, tools, TUI entries, Markdown, JSON, and SARIF expose the result with explicit `complete`, `partial`, or `abstained` status.
+6. Patch proposals execute only exact configured commands in separate baseline and candidate Git worktrees. Bubblewrap exposes no host-root mount and supplies separate network/PID/IPC/UTS namespaces, a cleared environment, private HOME, and private `/tmp`.
 
 ## Persistence
 
@@ -22,7 +22,7 @@ State writes use revision checks, a lock file, an atomic rename, and a previous-
 
 ## Provider authority
 
-Provider evidence retains provider ID, version, source hash, range, and strength. External analyzer fixes are evidence only. Unknown rules are capped at C2/observe. Counterevidence, R3 risk, unhealthy feedback, or insufficient calibrated evidence can only reduce authority.
+Provider evidence retains provider ID, version, source hash, range, and strength. External analyzer fixes are evidence only, and multiple provider IDs do not imply independence. Unknown rules are capped at C2/observe. Counterevidence, R3 risk, unhealthy feedback, or insufficient calibrated evidence can only reduce authority.
 
 ## Repository graph
 

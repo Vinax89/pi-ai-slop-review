@@ -99,6 +99,13 @@ export async function collectGraphEvidence(
       providerId: "repository-graph",
       providerVersion: "1",
       providerCapabilities: ["symbols", "references", "call-hierarchy", "public-surface", "tests"],
+      providers: [{
+        id: "repository-graph",
+        version: "1",
+        capabilities: ["symbols", "references", "call-hierarchy", "public-surface", "tests"],
+        status: "skipped",
+        diagnostic: "disabled by configuration",
+      }],
       scannedFiles: [],
       findings: [],
       skipped: [{ filePath: "<graph>", reason: "repository graph is disabled by configuration", providerId: "repository-graph" }],
