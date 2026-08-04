@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, watch, writeFileSync } from "node:fs";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { DEFAULT_CONFIG, type AiSlopConfig } from "../src/core/config.ts";
+import { collectLspEvidence } from "../src/providers/lsp.ts";
 import { importAnalyzerReports } from "../src/providers/analyzer-reports.ts";
 import { safeProjectFile } from "../src/providers/files.ts";
 import { scanFiles } from "../src/scan.ts";
@@ -20,6 +22,49 @@ function root(): string {
 
 function config(): AiSlopConfig {
   return structuredClone(DEFAULT_CONFIG);
+}
+
+function minimalLspServer(directory: string): string {
+  const server = path.join(directory, "minimal-lsp.cjs");
+  writeFileSync(server, String.raw`
+const fs = require('node:fs');
+if (process.argv[2]) fs.writeFileSync(process.argv[2], 'active');
+let buffer = Buffer.alloc(0);
+function send(id, result) {
+  const body = Buffer.from(JSON.stringify({jsonrpc:'2.0', id, result}));
+  process.stdout.write('Content-Length: ' + body.length + '\r\n\r\n');
+  process.stdout.write(body);
+}
+function dispatch(message) {
+  if (message.method === 'initialize') {
+    const peer = process.argv[3];
+    if (!peer || fs.existsSync(peer)) return send(message.id, {serverInfo:{name:'minimal',version:'1'},capabilities:{}});
+    const watcher = fs.watch(require('node:path').dirname(peer), () => {
+      if (!fs.existsSync(peer)) return;
+      watcher.close();
+      send(message.id, {serverInfo:{name:'minimal',version:'1'},capabilities:{}});
+    });
+    return;
+  }
+  if (message.method === 'textDocument/diagnostic') return send(message.id, {items:[]});
+  if (message.method === 'textDocument/documentSymbol') return send(message.id, []);
+  if (message.method === 'shutdown') return send(message.id, null);
+  if (message.method === 'exit') process.exit(0);
+}
+process.stdin.on('data', chunk => {
+  buffer = Buffer.concat([buffer, chunk]);
+  while (true) {
+    const end = buffer.indexOf('\r\n\r\n');
+    if (end < 0) return;
+    const length = Number(buffer.subarray(0, end).toString().match(/Content-Length:\s*(\d+)/i)[1]);
+    if (buffer.length < end + 4 + length) return;
+    const body = buffer.subarray(end + 4, end + 4 + length).toString();
+    buffer = buffer.subarray(end + 4 + length);
+    dispatch(JSON.parse(body));
+  }
+});
+`);
+  return server;
 }
 
 test("imports SARIF findings and rejects out-of-project locations", async () => {
@@ -59,6 +104,31 @@ test("imports SARIF findings and rejects out-of-project locations", async () => 
   assert.equal(finding?.confidence, "C2");
   assert.match(finding?.evidence.join(" ") ?? "", /code flow/);
   assert.ok(result.skipped.some((item) => /no readable in-project/.test(item.reason)));
+});
+
+test("federation bounds evidence and serialized output", async () => {
+  const directory = root();
+  writeFileSync(path.join(directory, "input.ts"), "export const value = 1;\n");
+  const results = Array.from({ length: 200 }, (_, index) => ({
+    ruleId: `rule-${index}`,
+    level: "warning",
+    message: { text: `${index}:${"x".repeat(1_000)}` },
+    locations: [{ physicalLocation: { artifactLocation: { uri: "input.ts" }, region: { startLine: 1, startColumn: 1 } } }],
+  }));
+  writeFileSync(path.join(directory, "large.sarif"), JSON.stringify({
+    version: "2.1.0",
+    runs: [{ tool: { driver: { name: "Large" } }, results }],
+  }));
+  const settings = config();
+  settings.graph.enabled = false;
+  settings.providers.sarif = ["large.sarif"];
+  settings.limits.maxOutputBytes = 100_000;
+  settings.limits.maxFindings = 500;
+
+  const result = await scanFiles(directory, ["input.ts"], undefined, "explicit", { config: settings });
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) <= settings.limits.maxOutputBytes);
+  assert.equal(result.completeness?.status, "partial");
+  assert.ok(result.skipped.some((item) => item.filePath === "<output>"));
 });
 
 test("malformed configured provider results make the federated scan partial", async () => {
@@ -187,6 +257,45 @@ test("dependency provenance exposes malformed manifest degradation instead of tr
   assert.ok(Array.isArray(evidence?.details?.manifestDiagnostics));
   assert.ok(result.skipped.some((item) => item.providerId === "dependency-provenance" && /package\.json/.test(item.reason)));
   assert.ok(result.scannedFiles.includes("input.ts"));
+});
+
+test("independent language servers run with bounded concurrency two", async () => {
+  const directory = root();
+  writeFileSync(path.join(directory, "input.ts"), "export const value = 1;\n");
+  writeFileSync(path.join(directory, "input.py"), "value = 1\n");
+  const server = minimalLspServer(directory);
+  const typescriptMarker = path.join(directory, "typescript-started");
+  const pythonMarker = path.join(directory, "python-started");
+  const settings = config();
+  settings.limits.commandTimeoutMs = 2_000;
+  settings.execution.trusted = true;
+  settings.execution.lspServers.typescript = [process.execPath, server, typescriptMarker, pythonMarker];
+  settings.execution.lspServers.python = [process.execPath, server, pythonMarker, typescriptMarker];
+
+  const results = await collectLspEvidence(directory, ["input.ts", "input.py"], settings, true);
+  assert.equal(results.length, 2);
+  assert.ok(results.every((result) => !result.skipped.length));
+});
+
+test("language-server collection cancels while a provider is active", async () => {
+  const directory = root();
+  writeFileSync(path.join(directory, "input.ts"), "export const value = 1;\n");
+  const server = minimalLspServer(directory);
+  const settings = config();
+  settings.limits.commandTimeoutMs = 2_000;
+  settings.execution.trusted = true;
+  const marker = path.join(directory, "active");
+  settings.execution.lspServers.typescript = [process.execPath, server, marker];
+  const controller = new AbortController();
+  const watcher = watch(directory);
+  const active = once(watcher, "change");
+  const pending = collectLspEvidence(directory, ["input.ts"], settings, true, controller.signal);
+  await active;
+  controller.abort();
+  watcher.close();
+
+  const results = await pending;
+  assert.ok(results[0]?.skipped.some((item) => /cancel/i.test(item.reason)));
 });
 
 test("configured LSP execution is blocked until both trust gates pass", async () => {

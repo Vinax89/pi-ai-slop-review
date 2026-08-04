@@ -33,7 +33,7 @@ Install/update copies to a staging directory, installs locked runtime dependenci
 
 ## Recovery
 
-State JSON keeps an atomic backup and rejects revision conflicts. SQLite graph writes are transactional and may be deleted/rebuilt without losing source. Interrupted lab worktrees are removed on normal exit; if the host terminates abruptly, use `git worktree prune` after inspecting them.
+State JSON keeps bounded baselines and an atomic backup, rejects revision conflicts, and migrates bounded session history to `sessions.sqlite`. SQLite session and graph writes are transactional; graph state may be deleted/rebuilt without losing source. Interactive scan processes retry one infrastructure failure, recycle after 20 jobs or memory thresholds, await termination before replacement, and convert resource exhaustion to explicit partial/abstained results. Interrupted lab worktrees are removed on normal exit; if the host terminates abruptly, use `git worktree prune` after inspecting them.
 
 ## Validation
 

@@ -30,8 +30,8 @@ Pi packages execute code with the user's privileges. Review the source and [`doc
 
 - `/slop-review` reviews files changed through tracked `edit`, `write`, or `ctx_edit` calls in the current Pi session.
 - `/slop-review src/a.ts src/b.ts` reviews explicit project-relative files.
-- `/slop-audit` explicitly runs repository-wide review of up to 10,000 supported files by default; TypeScript stages reuse project programs and Python helpers run in up to four bounded batches concurrently.
-- Every review or audit reports `complete`, `partial`, or `abstained`; incomplete results are never presented as clean. A weighted-severity Markdown report with evidence, possible remediation, and suggested verification is written to private extension state.
+- `/slop-audit` explicitly runs repository-wide review of up to 10,000 supported files by default; native TypeScript scans use programs bounded to 250 files and 4 MiB of root source, the repository graph reports `partial` instead of exceeding that budget, and Python helpers run in up to two bounded batches concurrently.
+- Every review or audit runs in a reusable isolated child process with a 192 MiB old-generation limit; streamed content hashes identify unchanged requests without a second result copy, garbage collection runs only under heap pressure, and recycled processes reuse Node's native compile cache. Results report `complete`, `partial`, or `abstained`; process failure or memory-limit exit becomes `abstained` instead of terminating Pi. A weighted-severity Markdown report with evidence, possible remediation, and suggested verification is written to private extension state.
 - `/slop-findings` opens the TUI finding picker; a finding ID prefix opens it directly.
 - `/slop-triage` summarizes evidence, counterevidence, uncertainty, and human-review guidance; findings are never treated as proof that code is removable.
 - `/slop-timeline` shows content-hash-valid mutations and verification freshness.

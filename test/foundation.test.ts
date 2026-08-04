@@ -239,6 +239,43 @@ test("state store uses revision checks and keeps repository state outside the pr
   assert.equal(path.relative(root, store.statePath).startsWith(".."), true);
 });
 
+test("state store bounds baselines and moves session history to SQLite", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-slop-bounded-state-"));
+  const stateRoot = mkdtempSync(path.join(tmpdir(), "ai-slop-bounded-state-root-"));
+  const store = new StateStore(root, stateRoot);
+  const scans = Array.from({ length: 25 }, (_, index) => createScanResult({
+    engine: "semantic-review",
+    engineVersion: "test",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: [],
+    findings: [],
+    skipped: [],
+    generatedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+  }));
+  const saved = store.update((state) => {
+    for (const [index, scan] of scans.entries()) state.baselines[`baseline-${index}`] = scan;
+    state.sessions.legacy = {
+      id: "legacy",
+      branchId: "main",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      events: [],
+      scans,
+      claims: [],
+    };
+  });
+
+  assert.equal(Object.keys(saved.baselines).length, 20);
+  assert.deepEqual(saved.sessions, {});
+  assert.equal(store.loadSessions()[0]?.scans.length, 20);
+  for (let index = 0; index < 105; index += 1) {
+    store.saveSession({ id: `session-${index}`, branchId: "main", updatedAt: new Date(Date.UTC(2026, 0, 2, 0, 0, index)).toISOString(), events: [], scans: [], claims: [] });
+  }
+  assert.equal(store.loadSessions(200).length, 100);
+});
+
+
 test("state store recovers from a corrupt live file and migrates additive v1 fields", () => {
   const root = mkdtempSync(path.join(tmpdir(), "ai-slop-repo-"));
   const stateRoot = mkdtempSync(path.join(tmpdir(), "ai-slop-state-"));
@@ -341,6 +378,29 @@ test("configuration overlays preserve inherited LSP and experiment settings whil
   assert.equal(loaded.config.experiments.smt, true);
   assert.equal(loaded.config.experiments.translationValidation, false);
   assert.match(loaded.warnings.join("\n"), /invalid LSP command|invalid experiment flag/);
+});
+
+test("configuration clamps resource limits to safe ceilings", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-slop-config-limits-"));
+  const globalPath = path.join(root, "global.json");
+  writeFileSync(globalPath, JSON.stringify({
+    limits: {
+      maxFiles: Number.MAX_SAFE_INTEGER,
+      maxFileBytes: Number.MAX_SAFE_INTEGER,
+      commandTimeoutMs: Number.MAX_SAFE_INTEGER,
+      maxOutputBytes: Number.MAX_SAFE_INTEGER,
+      maxFindings: Number.MAX_SAFE_INTEGER,
+    },
+  }));
+  const loaded = loadConfig(root, { globalPath });
+  assert.deepEqual(loaded.config.limits, {
+    maxFiles: 10_000,
+    maxFileBytes: 4 * 1024 * 1024,
+    commandTimeoutMs: 10 * 60_000,
+    maxOutputBytes: 10 * 1024 * 1024,
+    maxFindings: 5_000,
+  });
+  assert.equal(loaded.warnings.filter((warning) => warning.includes("clamped limits.")).length, 5);
 });
 
 test("corpus loader and evaluator count unsafe hard-negative actions", async () => {

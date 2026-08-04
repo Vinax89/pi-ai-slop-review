@@ -30,6 +30,17 @@ export async function runProvider(
   context: ProviderContext,
   signal?: AbortSignal,
 ): Promise<ProviderOutput> {
+  if (signal?.aborted) {
+    return {
+      run: {
+        id: provider.id,
+        version: provider.version,
+        capabilities: [...provider.capabilities],
+        status: "skipped",
+        diagnostic: "provider cancelled before start",
+      },
+    };
+  }
   if (!provider.supports(context)) {
     return {
       run: {

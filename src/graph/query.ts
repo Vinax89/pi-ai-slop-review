@@ -14,12 +14,18 @@ export function queryContext(rootDir: string, query: string, stateRoot?: string)
     const normalized = query.trim();
     const nodes = normalized.includes("/")
       ? store.nodes(normalized)
-      : store.findByName(normalized).slice(0, 50);
+      : store.findByName(normalized);
     return {
       query: normalized,
       nodes,
       impacts: nodes.slice(0, 20).map((node) => store.impact(node.id)),
-      publicSurface: store.publicSurface().filter((entry) => nodes.some((node) => node.id === entry.id)),
+      publicSurface: nodes.filter((node) => node.exported).map((node) => ({
+        id: node.id,
+        filePath: node.filePath,
+        qualifiedName: node.qualifiedName,
+        kind: node.kind,
+        signature: node.signature,
+      })),
     };
   } finally {
     store.close();

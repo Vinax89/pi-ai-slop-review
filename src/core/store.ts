@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   closeSync,
   copyFileSync,
   existsSync,
@@ -12,8 +13,9 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
-import { SCHEMA_VERSION, type PersistedState } from "../types.ts";
+import { SCHEMA_VERSION, type PersistedState, type StoredSession } from "../types.ts";
 import { assessScanCompleteness } from "./completeness.ts";
 import { isScanResult, canonicalJson, sha256 } from "./schema.ts";
 
@@ -80,6 +82,36 @@ function validateState(value: unknown, repositoryId: string): PersistedState {
   }
   return candidate as PersistedState;
 }
+function boundSession(session: StoredSession): StoredSession {
+  return {
+    ...session,
+    events: session.events.slice(-1_000),
+    scans: session.scans.slice(-20),
+    claims: session.claims.slice(-100),
+  };
+}
+
+function boundState(state: PersistedState): PersistedState {
+  const baselines = Object.fromEntries(
+    Object.entries(state.baselines)
+      .sort(([, left], [, right]) => right.generatedAt.localeCompare(left.generatedAt))
+      .slice(0, 20),
+  );
+  return {
+    ...state,
+    suppressions: state.suppressions.slice(-1_000),
+    feedback: state.feedback.slice(-1_000),
+    baselines,
+    proposals: state.proposals.slice(-100),
+    labRuns: state.labRuns.slice(-100),
+  };
+}
+
+interface StateSnapshot {
+  state: PersistedState;
+  primaryValid: boolean;
+}
+
 
 export class StateStore {
   readonly repositoryId: string;
@@ -87,6 +119,7 @@ export class StateStore {
   readonly statePath: string;
   readonly backupPath: string;
   readonly lockPath: string;
+  readonly sessionDatabasePath: string;
   constructor(rootDir: string, stateRoot = path.join(homedir(), ".pi", "agent", "ai-slop", "state")) {
     this.repositoryId = sha256(path.resolve(rootDir));
     this.directory = path.join(stateRoot, this.repositoryId.slice(0, 32));
@@ -94,21 +127,32 @@ export class StateStore {
     this.backupPath = path.join(this.directory, "state.backup.json");
     this.lockPath = path.join(this.directory, "state.lock");
     this.clearMarkerPath = path.join(this.directory, "state.cleared");
+    this.sessionDatabasePath = path.join(this.directory, "sessions.sqlite");
   }
 
   readonly clearMarkerPath: string;
 
 
   load(): PersistedState {
+    return this.loadSnapshot().state;
+  }
+
+  private loadSnapshot(): StateSnapshot {
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-    if (!existsSync(this.statePath)) return initialState(this.repositoryId);
+    if (!existsSync(this.statePath)) return { state: initialState(this.repositoryId), primaryValid: false };
     try {
-      return validateState(JSON.parse(readFileSync(this.statePath, "utf8")), this.repositoryId);
+      const state = validateState(JSON.parse(readFileSync(this.statePath, "utf8")), this.repositoryId);
+      this.migrateSessions(state.sessions);
+      state.sessions = {};
+      return { state, primaryValid: true };
     } catch (primaryError) {
       let backupDiagnostic = "";
       if (existsSync(this.backupPath)) {
         try {
-          return validateState(JSON.parse(readFileSync(this.backupPath, "utf8")), this.repositoryId);
+          const state = validateState(JSON.parse(readFileSync(this.backupPath, "utf8")), this.repositoryId);
+          this.migrateSessions(state.sessions);
+          state.sessions = {};
+          return { state, primaryValid: false };
         } catch (backupError) {
           backupDiagnostic = `; backup recovery failed: ${backupError instanceof Error ? backupError.message : String(backupError)}`;
         }
@@ -128,8 +172,8 @@ export class StateStore {
     }
   }
 
-  private saveLocked(state: PersistedState): PersistedState {
-    const current = this.load();
+  private saveLocked(state: PersistedState, snapshot = this.loadSnapshot()): PersistedState {
+    const current = snapshot.state;
     if (existsSync(this.clearMarkerPath)) {
       let marker: { clearedAt?: unknown; revision?: unknown };
       try {
@@ -153,20 +197,13 @@ export class StateStore {
     }
     const temporaryPath = path.join(this.directory, `state.${process.pid}.${Date.now()}.tmp`);
     try {
-      const next = validateState(
+      let next = boundState(validateState(
         { ...state, revision: state.revision + 1, updatedAt: now(), schemaVersion: SCHEMA_VERSION },
         this.repositoryId,
-      );
-      let primaryValid = false;
-      if (existsSync(this.statePath)) {
-        try {
-          validateState(JSON.parse(readFileSync(this.statePath, "utf8")), this.repositoryId);
-          primaryValid = true;
-        } catch {
-          // Do not replace a valid backup with a corrupt primary.
-        }
-      }
-      if (primaryValid) copyFileSync(this.statePath, this.backupPath);
+      ));
+      this.migrateSessions(next.sessions);
+      next = { ...next, sessions: {} };
+      if (snapshot.primaryValid) copyFileSync(this.statePath, this.backupPath);
       writeFileSync(temporaryPath, `${canonicalJson(next)}\n`, { encoding: "utf8", mode: 0o600 });
       renameSync(temporaryPath, this.statePath);
       return next;
@@ -179,15 +216,67 @@ export class StateStore {
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     const lock = this.acquireLock();
     try {
-      const state = this.load();
-      const draft = structuredClone(state);
+      const snapshot = this.loadSnapshot();
+      const draft = structuredClone(snapshot.state);
       const candidate = mutator(draft);
-      return this.saveLocked(candidate === undefined ? draft : candidate);
+      return this.saveLocked(candidate === undefined ? draft : candidate, snapshot);
     } finally {
       closeSync(lock);
       rmSync(this.lockPath, { force: true });
     }
   }
+  saveSession(session: StoredSession): void {
+    this.migrateSessions({ [session.id]: session });
+  }
+
+  loadSessions(limit = 100): StoredSession[] {
+    if (!existsSync(this.sessionDatabasePath)) return [];
+    const database = this.openSessionDatabase();
+    try {
+      const rows = database.prepare("SELECT payload FROM sessions ORDER BY updated_at DESC, id LIMIT ?").all(limit) as Array<{ payload: string }>;
+      return rows.flatMap(({ payload }) => {
+        try {
+          const session = JSON.parse(payload) as StoredSession;
+          return session && typeof session.id === "string" && Array.isArray(session.scans) ? [session] : [];
+        } catch {
+          return [];
+        }
+      });
+    } finally {
+      database.close();
+    }
+  }
+
+  private migrateSessions(sessions: Record<string, StoredSession>): void {
+    if (!Object.keys(sessions).length) return;
+    const database = this.openSessionDatabase();
+    try {
+      const upsert = database.prepare("INSERT INTO sessions(id, branch_id, updated_at, payload) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET branch_id=excluded.branch_id, updated_at=excluded.updated_at, payload=excluded.payload");
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        for (const session of Object.values(sessions)) {
+          const bounded = boundSession(session);
+          upsert.run(bounded.id, bounded.branchId, bounded.updatedAt, canonicalJson(bounded));
+        }
+        database.exec("DELETE FROM sessions WHERE id NOT IN (SELECT id FROM sessions ORDER BY updated_at DESC, id LIMIT 100)");
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    } finally {
+      database.close();
+    }
+  }
+
+  private openSessionDatabase(): DatabaseSync {
+    mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+    const database = new DatabaseSync(this.sessionDatabasePath);
+    chmodSync(this.sessionDatabasePath, 0o600);
+    database.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, updated_at TEXT NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS sessions_updated_idx ON sessions(updated_at DESC, id)");
+    return database;
+  }
+
   clear(): void {
     const lock = this.acquireLock();
     try {
@@ -202,6 +291,9 @@ export class StateStore {
       }
       rmSync(this.statePath, { force: true });
       rmSync(this.backupPath, { force: true });
+      rmSync(this.sessionDatabasePath, { force: true });
+      rmSync(`${this.sessionDatabasePath}-wal`, { force: true });
+      rmSync(`${this.sessionDatabasePath}-shm`, { force: true });
       writeFileSync(this.clearMarkerPath, JSON.stringify({ clearedAt: now(), revision }), { encoding: "utf8", mode: 0o600 });
     } finally {
       closeSync(lock);

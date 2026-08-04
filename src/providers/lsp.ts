@@ -418,12 +418,13 @@ export async function collectLspEvidence(
     grouped.set(language, [...(grouped.get(language) ?? []), { ...file, languageId }]);
   }
   const results: ScanResult[] = [];
-  for (const [language, files] of grouped) {
-    const command = config.execution.lspServers[language];
-    if (!command) continue;
-    if (!trustedProject || !config.execution.trusted) {
-      results.push(
-        createScanResult({
+  const languages = [...grouped.entries()];
+  for (let index = 0; index < languages.length; index += 2) {
+    const batch = await Promise.all(languages.slice(index, index + 2).map(async ([language, files]) => {
+      const command = config.execution.lspServers[language];
+      if (!command) return undefined;
+      if (!trustedProject || !config.execution.trusted) {
+        return createScanResult({
           engine: "provider-federation",
           engineVersion: `${language} LSP blocked`,
           rootDir,
@@ -433,11 +434,11 @@ export async function collectLspEvidence(
           scannedFiles: [],
           findings: [],
           skipped: [{ filePath: `<lsp:${language}>`, reason: "LSP execution requires both trusted project context and execution.trusted configuration", providerId: `lsp-${language}` }],
-        }),
-      );
-      continue;
-    }
-    results.push(await collectLanguage(rootDir, language, files, command, config, signal));
+        });
+      }
+      return collectLanguage(rootDir, language, files, command, config, signal);
+    }));
+    results.push(...batch.filter((result): result is ScanResult => result !== undefined));
   }
   return results;
 }

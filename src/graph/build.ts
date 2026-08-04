@@ -6,17 +6,22 @@ import path from "node:path";
 import * as ts from "typescript";
 
 import type { AiSlopConfig } from "../core/config.ts";
-import { fingerprint, normalizePath, sha256 } from "../core/schema.ts";
+import { contentHashOnce, fingerprint, normalizePath, sha256 } from "../core/schema.ts";
 import { canonicalSymbol } from "../core/typescript.ts";
 import { safeProjectFile } from "../providers/files.ts";
-import type { TypeScriptProjectContext } from "../typescript-scanner.ts";
+import { batchTypeScriptFiles, type TypeScriptProjectContext } from "../typescript-scanner.ts";
 import type { GraphEdge, GraphFileFacts, GraphNode, GraphNodeKind } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
 const PYTHON_HELPER = fileURLToPath(new URL("../python_graph_helper.py", import.meta.url));
 const PYTHON_BATCH_SIZE = 500;
-const PYTHON_BATCH_CONCURRENCY = 4;
+const PYTHON_BATCH_CONCURRENCY = 2;
 const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+type GraphCacheRecord = { cacheHash: string; contentHash?: string };
+function pythonGraphCacheHash(contentHash: string): string {
+  return sha256(`${contentHash}\0${process.env.PI_AI_SLOP_PYTHON ?? "python3"}\0${contentHashOnce(PYTHON_HELPER)}`);
+}
+
 
 function matches(filePath: string, patterns: string[]): boolean {
   return patterns.some((pattern) => {
@@ -148,7 +153,7 @@ function configForFiles(files: string[], configPath?: string): { rootNames: stri
   const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
   if (loaded.error) return { rootNames: files, options: {} };
   const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, path.dirname(configPath));
-  return { rootNames: [...new Set([...parsed.fileNames, ...files])], options: { ...parsed.options, allowJs: true } };
+  return { rootNames: files, options: { ...parsed.options, allowJs: true } };
 }
 
 function declarationId(rootDir: string, checker: ts.TypeChecker, symbol: ts.Symbol | undefined): string | undefined {
@@ -168,7 +173,8 @@ function extractTypescript(
   inputFiles: string[],
   config: AiSlopConfig,
   reusableProjects: TypeScriptProjectContext[] = [],
-): GraphFileFacts[] {
+  cached: Map<string, GraphCacheRecord> = new Map(),
+): { facts: GraphFileFacts[]; cachedFiles: string[] } {
   const groups = new Map<string, string[]>();
   const configPaths = new Map<string, string | undefined>();
   const reusableByKey = new Map<string, TypeScriptProjectContext>();
@@ -190,30 +196,38 @@ function extractTypescript(
     else groups.set(key, [filePath]);
   }
   const facts: GraphFileFacts[] = [];
-  for (const [key, files] of groups) {
-    const reusable = reusableByKey.get(key);
-    let program: ts.Program;
-    let checker: ts.TypeChecker;
-    let options: ts.CompilerOptions;
-    if (reusable) {
-      ({ program, checker, options } = reusable);
-    } else {
-      const project = configForFiles(files, key === "<none>" ? undefined : key);
-      options = project.options;
-      program = ts.createProgram({ rootNames: project.rootNames, options });
-      checker = program.getTypeChecker();
-    }
-    let compilerContext = JSON.stringify(options);
-    const contextPath = reusable?.configPath ?? (key === "<none>" || key.startsWith("<reusable:") ? undefined : key);
-    if (contextPath) {
-      try {
-        compilerContext += `\0${readFileSync(contextPath, "utf8")}`;
-      } catch {
-        compilerContext += `\0${contextPath}`;
+  const cachedFiles: string[] = [];
+  for (const [key, groupFiles] of groups) {
+    for (const files of batchTypeScriptFiles(groupFiles)) {
+      const reusable = reusableByKey.get(key);
+      const configured = reusable ? undefined : configForFiles(files, key === "<none>" ? undefined : key);
+      const options = reusable?.options ?? configured!.options;
+      let compilerContext = JSON.stringify(options);
+      const contextPath = reusable?.configPath ?? (key === "<none>" || key.startsWith("<reusable:") ? undefined : key);
+      if (contextPath) {
+        try {
+          compilerContext += `\0${readFileSync(contextPath, "utf8")}`;
+        } catch {
+          compilerContext += `\0${contextPath}`;
+        }
       }
-    }
-    const compilerContextHash = sha256(compilerContext);
-    for (const absolutePath of files) {
+      const compilerContextHash = sha256(compilerContext);
+      const sourceHashes = new Map(files.map((absolutePath) => [absolutePath, contentHashOnce(absolutePath)]));
+      const changedFiles = files.filter((absolutePath) => {
+        const filePath = normalizePath(path.relative(rootDir, absolutePath));
+        const contentHash = sourceHashes.get(absolutePath)!;
+        const cacheHash = sha256(`${contentHash}\0${compilerContextHash}`);
+        const current = cached.get(filePath);
+        if (current?.contentHash === contentHash && current.cacheHash === cacheHash) {
+          cachedFiles.push(filePath);
+          return false;
+        }
+        return true;
+      });
+      if (!changedFiles.length) continue;
+      const program = reusable?.program ?? ts.createProgram({ rootNames: changedFiles, options });
+      const checker = reusable?.checker ?? program.getTypeChecker();
+      for (const absolutePath of changedFiles) {
       const sourceFile = program.getSourceFile(absolutePath);
       if (!sourceFile) continue;
       const source = sourceFile.text;
@@ -318,10 +332,12 @@ function extractTypescript(
         if (!current || (!current.bodyHash && graphNode.bodyHash)) uniqueNodes.set(graphNode.id, graphNode);
       }
       const uniqueEdges = [...new Map(edges.map((graphEdge) => [graphEdge.id, graphEdge])).values()];
-      facts.push({ filePath, sourceHash: sha256(source), cacheHash: sha256(`${sha256(source)}\0${compilerContextHash}`), source, language: "typescript", nodes: [...uniqueNodes.values()], edges: uniqueEdges });
+      const sourceHash = sourceHashes.get(absolutePath)!;
+      facts.push({ filePath, sourceHash, cacheHash: sha256(`${sourceHash}\0${compilerContextHash}`), source, language: "typescript", nodes: [...uniqueNodes.values()], edges: uniqueEdges });
+    }
     }
   }
-  return facts;
+  return { facts, cachedFiles };
 }
 
 interface PythonGraphOutput {
@@ -432,84 +448,85 @@ async function extractPython(
   maxFileBytes = 1024 * 1024,
   maxOutputBytes = 8 * 1024 * 1024,
   commandTimeoutMs = 120_000,
+  onFacts?: (facts: GraphFileFacts[]) => void,
 ): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string> }> {
   if (!paths.length) return { facts: [], errors: {} };
   const batches = Array.from({ length: Math.ceil(paths.length / PYTHON_BATCH_SIZE) }, (_, index) =>
     paths.slice(index * PYTHON_BATCH_SIZE, (index + 1) * PYTHON_BATCH_SIZE));
-  const outputs = new Array<PythonGraphOutput>(batches.length);
+  const knownFiles = new Set(paths);
+  const facts: GraphFileFacts[] = [];
+  const errors: Record<string, string> = {};
   let nextBatch = 0;
   const worker = async (): Promise<void> => {
     while (nextBatch < batches.length) {
       const index = nextBatch;
       nextBatch += 1;
-      const batch = batches[index];
+      const batch = batches[index]!;
+      let output: PythonGraphOutput;
       if (signal?.aborted) {
-        outputs[index] = { files: {}, errors: Object.fromEntries(batch.map((filePath) => [filePath, "Python graph scan aborted"])) };
-        continue;
+        output = { files: {}, errors: Object.fromEntries(batch.map((filePath) => [filePath, "Python graph scan aborted"])) };
+      } else {
+        try {
+          output = await runPythonGraphHelper(rootDir, batch, signal, maxFileBytes, maxOutputBytes, commandTimeoutMs);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          const message = signal?.aborted
+            ? "Python graph scan aborted"
+            : detail.startsWith("Python graph helper ")
+              ? `Python graph scan invalid: ${detail}`
+              : `Python graph scan unavailable: ${detail}`;
+          output = { files: {}, errors: Object.fromEntries(batch.map((filePath) => [filePath, message])) };
+        }
       }
-      try {
-        outputs[index] = await runPythonGraphHelper(rootDir, batch, signal, maxFileBytes, maxOutputBytes, commandTimeoutMs);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        const message = signal?.aborted
-          ? "Python graph scan aborted"
-          : detail.startsWith("Python graph helper ")
-            ? `Python graph scan invalid: ${detail}`
-            : `Python graph scan unavailable: ${detail}`;
-        outputs[index] = { files: {}, errors: Object.fromEntries(batch.map((filePath) => [filePath, message])) };
+      Object.assign(errors, output.errors);
+      const batchFacts: GraphFileFacts[] = [];
+      for (const [filePath, raw] of Object.entries(output.files)) {
+        let source: string;
+        try {
+          source = readFileSync(path.join(rootDir, filePath), "utf8");
+        } catch (error) {
+          errors[filePath] = `cannot read Python graph source: ${error instanceof Error ? error.message : String(error)}`;
+          continue;
+        }
+        const rootNode = fileNode(filePath, source.length, "python");
+        const nodes: GraphNode[] = [rootNode];
+        for (const rawNode of raw.nodes) {
+          nodes.push({ ...rawNode, id: nodeId(filePath, rawNode.kind, rawNode.qualifiedName), filePath });
+        }
+        const byQualified = new Map(nodes.map((node) => [node.qualifiedName, node.id]));
+        const byName = new Map(nodes.map((node) => [node.name, node.id]));
+        const edges = raw.edges.map((rawEdge) => {
+          const fromId = rawEdge.from === "<file>" ? rootNode.id : byQualified.get(rawEdge.from) ?? byName.get(rawEdge.from) ?? fingerprint("graph-python", { filePath, name: rawEdge.from });
+          const rawTarget = rawEdge.to.replace(/^(?:call|module|registration):/, "");
+          const metadata = { ...rawEdge.metadata };
+          let toId = byQualified.get(rawTarget) ?? byName.get(rawTarget.split(".").at(-1) ?? rawTarget) ?? fingerprint("graph-python-target", { rawTarget });
+          if (rawEdge.kind === "imports") {
+            const level = typeof metadata.level === "number" ? metadata.level : 0;
+            const resolved = resolvePythonImport(filePath, rawTarget, level, knownFiles);
+            if (resolved) {
+              toId = nodeId(resolved, "file", resolved);
+              metadata.resolved = resolved;
+            }
+          }
+          return edge(filePath, fromId, toId, rawEdge.kind, rawEdge.confidence, metadata);
+        });
+        for (const node of nodes.slice(1)) {
+          edges.push(edge(filePath, rootNode.id, node.id, "contains", "C3"));
+          if (node.exported) edges.push(edge(filePath, rootNode.id, node.id, "exports", "C2"));
+          if (node.kind === "test") {
+            for (const call of edges.filter((item) => item.kind === "calls" && item.fromId === node.id)) {
+              edges.push(edge(filePath, node.id, call.toId, "covers", "C1"));
+            }
+          }
+        }
+        const sourceHash = contentHashOnce(path.resolve(rootDir, filePath), source);
+        batchFacts.push({ filePath, sourceHash, cacheHash: pythonGraphCacheHash(sourceHash), language: path.basename(filePath) === "pyproject.toml" ? "toml" : "python", nodes, edges });
       }
+      if (onFacts) onFacts(batchFacts);
+      else facts.push(...batchFacts);
     }
   };
   await Promise.all(Array.from({ length: Math.min(PYTHON_BATCH_CONCURRENCY, batches.length) }, worker));
-  const files: PythonGraphOutput["files"] = {};
-  const errors: Record<string, string> = {};
-  for (const output of outputs) {
-    Object.assign(files, output.files);
-    Object.assign(errors, output.errors);
-  }
-  const knownFiles = new Set(Object.keys(files));
-  const facts: GraphFileFacts[] = [];
-  for (const [filePath, raw] of Object.entries(files)) {
-    let source: string;
-    try {
-      source = readFileSync(path.join(rootDir, filePath), "utf8");
-    } catch (error) {
-      errors[filePath] = `cannot read Python graph source: ${error instanceof Error ? error.message : String(error)}`;
-      continue;
-    }
-    const rootNode = fileNode(filePath, source.length, "python");
-    const nodes: GraphNode[] = [rootNode];
-    for (const rawNode of raw.nodes) {
-      nodes.push({ ...rawNode, id: nodeId(filePath, rawNode.kind, rawNode.qualifiedName), filePath });
-    }
-    const byQualified = new Map(nodes.map((node) => [node.qualifiedName, node.id]));
-    const byName = new Map(nodes.map((node) => [node.name, node.id]));
-    const edges = raw.edges.map((rawEdge) => {
-      const fromId = rawEdge.from === "<file>" ? rootNode.id : byQualified.get(rawEdge.from) ?? byName.get(rawEdge.from) ?? fingerprint("graph-python", { filePath, name: rawEdge.from });
-      const rawTarget = rawEdge.to.replace(/^(?:call|module|registration):/, "");
-      const metadata = { ...rawEdge.metadata };
-      let toId = byQualified.get(rawTarget) ?? byName.get(rawTarget.split(".").at(-1) ?? rawTarget) ?? fingerprint("graph-python-target", { rawTarget });
-      if (rawEdge.kind === "imports") {
-        const level = typeof metadata.level === "number" ? metadata.level : 0;
-        const resolved = resolvePythonImport(filePath, rawTarget, level, knownFiles);
-        if (resolved) {
-          toId = nodeId(resolved, "file", resolved);
-          metadata.resolved = resolved;
-        }
-      }
-      return edge(filePath, fromId, toId, rawEdge.kind, rawEdge.confidence, metadata);
-    });
-    for (const node of nodes.slice(1)) {
-      edges.push(edge(filePath, rootNode.id, node.id, "contains", "C3"));
-      if (node.exported) edges.push(edge(filePath, rootNode.id, node.id, "exports", "C2"));
-      if (node.kind === "test") {
-        for (const call of edges.filter((item) => item.kind === "calls" && item.fromId === node.id)) {
-          edges.push(edge(filePath, node.id, call.toId, "covers", "C1"));
-        }
-      }
-    }
-    facts.push({ filePath, sourceHash: sha256(source), language: path.basename(filePath) === "pyproject.toml" ? "toml" : "python", nodes, edges });
-  }
   return { facts, errors };
 }
 
@@ -563,7 +580,7 @@ function extractPackageJson(rootDir: string, paths: string[]): { facts: GraphFil
         edges.push(edge(file.filePath, rootNode.id, dependencyId, "depends-on", "C3", { group, name, version }));
       }
     }
-    return [{ filePath: file.filePath, sourceHash: sha256(file.source), language: "json", nodes, edges }];
+    return [{ filePath: file.filePath, sourceHash: contentHashOnce(path.resolve(rootDir, file.filePath), file.source), language: "json", nodes, edges }];
   });
   return { facts, errors };
 }
@@ -576,7 +593,7 @@ function extractMarkdown(rootDir: string, paths: string[], config: AiSlopConfig)
     const nodes: GraphNode[] = [rootNode];
     const edges: GraphEdge[] = [];
     if (!matches(file.filePath, config.graph.specPatterns)) {
-      return [{ filePath: file.filePath, sourceHash: sha256(file.source), language: "markdown", nodes, edges }];
+      return [{ filePath: file.filePath, sourceHash: contentHashOnce(path.resolve(rootDir, file.filePath), file.source), language: "markdown", nodes, edges }];
     }
     rootNode.kind = "specification";
     const headings: Array<{ start: number; end: number; name: string; level: number }> = [];
@@ -638,7 +655,7 @@ function extractMarkdown(rootDir: string, paths: string[], config: AiSlopConfig)
         if (target) edges.push(edge(file.filePath, node.id, nodeId(target.filePath, "file", target.filePath), "governs", "C2", { targetPath: target.filePath }));
       }
     }
-    return [{ filePath: file.filePath, sourceHash: sha256(file.source), language: "markdown", nodes, edges }];
+    return [{ filePath: file.filePath, sourceHash: contentHashOnce(path.resolve(rootDir, file.filePath), file.source), language: "markdown", nodes, edges }];
   });
 }
 
@@ -648,11 +665,13 @@ export async function buildGraphFacts(
   config: AiSlopConfig,
   signal?: AbortSignal,
   reusableProjects: TypeScriptProjectContext[] = [],
-): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string> }> {
+  cached: Map<string, GraphCacheRecord> = new Map(),
+  onFacts?: (facts: GraphFileFacts[]) => void,
+): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string>; cachedFiles: string[] }> {
   const root = realpathSync(rootDir);
   const errors: Record<string, string> = {};
   if (signal?.aborted) {
-    return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])) };
+    return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])), cachedFiles: [] };
   }
   const valid: string[] = [];
   for (const rawPath of paths) {
@@ -688,24 +707,39 @@ export async function buildGraphFacts(
     valid.push(real);
   }
   if (signal?.aborted) {
-    return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])) };
+    return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])), cachedFiles: [] };
   }
   const typescriptFiles = valid.filter((filePath) => TYPESCRIPT_EXTENSIONS.has(path.extname(filePath).toLowerCase()));
-  const pythonPaths = valid
+  const cachedFiles: string[] = [];
+  const changedNonTypescript = valid.filter((filePath) => !TYPESCRIPT_EXTENSIONS.has(path.extname(filePath).toLowerCase())).filter((filePath) => {
+    const display = normalizePath(path.relative(root, filePath));
+    const contentHash = contentHashOnce(filePath);
+    const pythonSource = path.extname(filePath).toLowerCase() === ".py" || path.basename(filePath) === "pyproject.toml";
+    const cacheHash = pythonSource ? pythonGraphCacheHash(contentHash) : contentHash;
+    const current = cached.get(display);
+    if (current?.contentHash === contentHash && current.cacheHash === cacheHash) {
+      cachedFiles.push(display);
+      return false;
+    }
+    return true;
+  });
+  const pythonPaths = changedNonTypescript
     .filter((filePath) => path.extname(filePath).toLowerCase() === ".py" || path.basename(filePath) === "pyproject.toml")
     .map((filePath) => normalizePath(path.relative(root, filePath)));
-  const markdownPaths = valid.filter((filePath) => path.extname(filePath).toLowerCase() === ".md").map((filePath) => normalizePath(path.relative(root, filePath)));
-  const packagePaths = valid.filter((filePath) => path.basename(filePath) === "package.json").map((filePath) => normalizePath(path.relative(root, filePath)));
-  const python = await extractPython(root, pythonPaths, signal, config.limits.maxFileBytes, config.limits.maxOutputBytes, config.limits.commandTimeoutMs);
+  const markdownPaths = changedNonTypescript.filter((filePath) => path.extname(filePath).toLowerCase() === ".md").map((filePath) => normalizePath(path.relative(root, filePath)));
+  const packagePaths = changedNonTypescript.filter((filePath) => path.basename(filePath) === "package.json").map((filePath) => normalizePath(path.relative(root, filePath)));
+  const python = await extractPython(root, pythonPaths, signal, config.limits.maxFileBytes, config.limits.maxOutputBytes, config.limits.commandTimeoutMs, onFacts);
   if (signal?.aborted) {
-    return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])) };
+    return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])), cachedFiles: [] };
   }
   const packageJson = extractPackageJson(root, packagePaths);
-  const facts = [
-    ...extractTypescript(root, typescriptFiles, config, reusableProjects),
-    ...python.facts,
-    ...packageJson.facts,
-    ...extractMarkdown(root, markdownPaths, config),
-  ];
-  return { facts, errors: { ...errors, ...python.errors, ...packageJson.errors } };
+  const typescript = extractTypescript(root, typescriptFiles, config, reusableProjects, cached);
+  const groups = [typescript.facts, python.facts, packageJson.facts, extractMarkdown(root, markdownPaths, config)];
+  const facts: GraphFileFacts[] = [];
+  for (const group of groups) {
+    if (!group.length) continue;
+    if (onFacts) onFacts(group);
+    else facts.push(...group);
+  }
+  return { facts, errors: { ...errors, ...python.errors, ...packageJson.errors }, cachedFiles: [...cachedFiles, ...typescript.cachedFiles] };
 }

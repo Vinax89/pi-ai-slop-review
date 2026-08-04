@@ -309,13 +309,20 @@ function mergeConfig(base: AiSlopConfig, value: unknown, warnings: string[], sou
     experiments: configuredExperiments,
     verification: { commands },
     limits: {
-      maxFiles: positiveInteger(limits?.maxFiles, base.limits.maxFiles),
-      maxFileBytes: positiveInteger(limits?.maxFileBytes, base.limits.maxFileBytes),
-      commandTimeoutMs: positiveInteger(limits?.commandTimeoutMs, base.limits.commandTimeoutMs),
-      maxOutputBytes: positiveInteger(limits?.maxOutputBytes, base.limits.maxOutputBytes),
-      maxFindings: positiveInteger(limits?.maxFindings, base.limits.maxFindings),
+      maxFiles: boundedLimit(limits?.maxFiles, base.limits.maxFiles, 10_000, warnings, source, "maxFiles"),
+      maxFileBytes: boundedLimit(limits?.maxFileBytes, base.limits.maxFileBytes, 4 * 1024 * 1024, warnings, source, "maxFileBytes"),
+      commandTimeoutMs: boundedLimit(limits?.commandTimeoutMs, base.limits.commandTimeoutMs, 10 * 60_000, warnings, source, "commandTimeoutMs"),
+      maxOutputBytes: boundedLimit(limits?.maxOutputBytes, base.limits.maxOutputBytes, 10 * 1024 * 1024, warnings, source, "maxOutputBytes"),
+      maxFindings: boundedLimit(limits?.maxFindings, base.limits.maxFindings, 5_000, warnings, source, "maxFindings"),
     },
   };
+}
+
+function boundedLimit(value: unknown, fallback: number, maximum: number, warnings: string[], source: string, key: string): number {
+  const parsed = positiveInteger(value, fallback);
+  if (parsed <= maximum) return parsed;
+  warnings.push(`${source}: clamped limits.${key} to ${maximum}`);
+  return maximum;
 }
 
 function positiveInteger(value: unknown, fallback: number): number {

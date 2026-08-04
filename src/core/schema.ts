@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -22,6 +23,21 @@ import {
   type ScanScope,
   type SkippedFile,
 } from "../types.ts";
+const scanFileHashes = new AsyncLocalStorage<Map<string, string>>();
+
+export function withFileHashCache<T>(operation: () => Promise<T>): Promise<T> {
+  return scanFileHashes.getStore() ? operation() : scanFileHashes.run(new Map(), operation);
+}
+
+export function contentHashOnce(filePath: string, content?: string | Buffer): string {
+  const absolute = path.resolve(filePath);
+  const cached = scanFileHashes.getStore()?.get(absolute);
+  if (cached) return cached;
+  const hash = sha256(content ?? readFileSync(absolute));
+  scanFileHashes.getStore()?.set(absolute, hash);
+  return hash;
+}
+
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -66,7 +82,7 @@ function fileContentHash(rootDir: string, filePath: string, fallback?: string): 
   try {
     const resolved = realpathSync(absolute);
     if (!isInside(root, resolved)) return null;
-    if (statSync(resolved).isFile()) return sha256(readFileSync(resolved));
+    if (statSync(resolved).isFile()) return contentHashOnce(resolved);
   } catch {
     // A skipped or removed file has no current content hash.
   }

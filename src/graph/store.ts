@@ -68,13 +68,13 @@ export class GraphStore {
 
   updateFiles(files: GraphFileFacts[]): number {
     if (!files.length) return 0;
-    const current = this.database.prepare("SELECT source_hash FROM files WHERE path = ?");
+    const current = this.database.prepare("SELECT source_hash, content_hash FROM files WHERE path = ?");
     const nodeIds = this.database.prepare("SELECT id FROM nodes WHERE file_path = ?");
     const deleteEdges = this.database.prepare("DELETE FROM edges WHERE file_path = ?");
     const deleteIncomingEdge = this.database.prepare("DELETE FROM edges WHERE to_id = ?");
     const deleteNodes = this.database.prepare("DELETE FROM nodes WHERE file_path = ?");
     const upsertFile = this.database.prepare(
-      "INSERT INTO files(path, source_hash, language, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET source_hash=excluded.source_hash, language=excluded.language, updated_at=excluded.updated_at",
+      "INSERT INTO files(path, source_hash, content_hash, language, updated_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET source_hash=excluded.source_hash, content_hash=excluded.content_hash, language=excluded.language, updated_at=excluded.updated_at",
     );
     const insertNode = this.database.prepare(
       "INSERT OR REPLACE INTO nodes(id, file_path, kind, name, qualified_name, start, end, exported, signature, body_hash, metadata) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -87,7 +87,7 @@ export class GraphStore {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       for (const facts of files) {
-        const existing = current.get(facts.filePath) as { source_hash?: string } | undefined;
+        const existing = current.get(facts.filePath) as { source_hash?: string; content_hash?: string } | undefined;
         const cacheHash = facts.cacheHash ?? facts.sourceHash;
         if (existing?.source_hash === cacheHash) continue;
         if (existing) {
@@ -98,7 +98,7 @@ export class GraphStore {
         }
         deleteEdges.run(facts.filePath);
         deleteNodes.run(facts.filePath);
-        upsertFile.run(facts.filePath, cacheHash, facts.language, updatedAt);
+        upsertFile.run(facts.filePath, cacheHash, facts.sourceHash, facts.language, updatedAt);
         for (const node of facts.nodes) {
           insertNode.run(
             node.id,
@@ -125,6 +125,19 @@ export class GraphStore {
       this.database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  cachedFiles(paths: Iterable<string>): Map<string, { cacheHash: string; contentHash?: string }> {
+    const current = this.database.prepare("SELECT source_hash, content_hash FROM files WHERE path = ?");
+    const cached = new Map<string, { cacheHash: string; contentHash?: string }>();
+    for (const filePath of paths) {
+      const row = current.get(filePath) as { source_hash?: string; content_hash?: string | null } | undefined;
+      if (row?.source_hash) cached.set(filePath, {
+        cacheHash: row.source_hash,
+        contentHash: row.content_hash ?? undefined,
+      });
+    }
+    return cached;
   }
 
   removeFiles(paths: string[]): void {
@@ -159,6 +172,29 @@ export class GraphStore {
       : this.database.prepare("SELECT * FROM nodes ORDER BY file_path, start, id").all();
     return rows.map(rowNode);
   }
+  *nodePages(pageSize = 500): Generator<GraphNode[]> {
+    let after = "";
+    while (true) {
+      const rows = this.database.prepare("SELECT * FROM nodes WHERE id > ? ORDER BY id LIMIT ?").all(after, pageSize) as Array<Record<string, unknown>>;
+      if (!rows.length) return;
+      yield rows.map(rowNode);
+      after = String(rows[rows.length - 1]!.id);
+    }
+  }
+
+
+  *nodePagesForFiles(filePaths: Iterable<string>, pageSize = 500): Generator<GraphNode[]> {
+    const query = this.database.prepare("SELECT * FROM nodes WHERE file_path = ? AND id > ? ORDER BY id LIMIT ?");
+    for (const filePath of filePaths) {
+      let after = "";
+      while (true) {
+        const rows = query.all(filePath, after, pageSize) as Array<Record<string, unknown>>;
+        if (!rows.length) break;
+        yield rows.map(rowNode);
+        after = String(rows[rows.length - 1]!.id);
+      }
+    }
+  }
 
   edges(filePath?: string): GraphEdge[] {
     const rows = filePath
@@ -166,54 +202,84 @@ export class GraphStore {
       : this.database.prepare("SELECT * FROM edges ORDER BY file_path, id").all();
     return rows.map(rowEdge);
   }
+  *edgePages(filePath: string, pageSize = 500): Generator<GraphEdge[]> {
+    let after = "";
+    while (true) {
+      const rows = this.database.prepare("SELECT * FROM edges WHERE file_path = ? AND id > ? ORDER BY id LIMIT ?").all(filePath, after, pageSize) as Array<Record<string, unknown>>;
+      if (!rows.length) return;
+      yield rows.map(rowEdge);
+      after = String(rows[rows.length - 1]!.id);
+    }
+  }
+
+  incomingEdges(toId: string, limit = 100, kind?: GraphEdge["kind"]): GraphEdge[] {
+    const rows = kind
+      ? this.database.prepare("SELECT * FROM edges WHERE to_id = ? AND kind = ? ORDER BY id LIMIT ?").all(toId, kind, limit)
+      : this.database.prepare("SELECT * FROM edges WHERE to_id = ? ORDER BY id LIMIT ?").all(toId, limit);
+    return rows.map(rowEdge);
+  }
+
+  outgoingEdges(fromId: string, limit = 100): GraphEdge[] {
+    return this.database.prepare("SELECT * FROM edges WHERE from_id = ? ORDER BY id LIMIT ?").all(fromId, limit).map(rowEdge);
+  }
+
 
   node(id: string): GraphNode | undefined {
     const row = this.database.prepare("SELECT * FROM nodes WHERE id = ?").get(id);
     return row ? rowNode(row) : undefined;
   }
 
-  findByName(name: string): GraphNode[] {
-    return this.database.prepare("SELECT * FROM nodes WHERE name = ? OR qualified_name = ? ORDER BY exported DESC, file_path").all(name, name).map(rowNode);
+  findByName(name: string, limit = 50): GraphNode[] {
+    return this.database.prepare("SELECT * FROM nodes WHERE name = ? OR qualified_name = ? ORDER BY exported DESC, file_path LIMIT ?").all(name, name, limit).map(rowNode);
   }
 
-  publicSurface(): PublicSurfaceEntry[] {
-    return this.database
-      .prepare("SELECT id, file_path, qualified_name, kind, signature FROM nodes WHERE exported = 1 ORDER BY file_path, qualified_name")
-      .all()
-      .map((row: any) => ({
-        id: String(row.id),
-        filePath: String(row.file_path),
-        qualifiedName: String(row.qualified_name),
-        kind: row.kind,
-        signature: row.signature === null ? undefined : String(row.signature),
-      }));
+  publicSurface(filePaths?: Iterable<string>): PublicSurfaceEntry[] {
+    type SurfaceRow = {
+      id: string;
+      file_path: string;
+      qualified_name: string;
+      kind: PublicSurfaceEntry["kind"];
+      signature: string | null;
+    };
+    const rows = filePaths
+      ? [...filePaths].flatMap((filePath) => this.database
+          .prepare("SELECT id, file_path, qualified_name, kind, signature FROM nodes WHERE exported = 1 AND file_path = ? ORDER BY qualified_name")
+          .all(filePath) as SurfaceRow[])
+      : this.database
+          .prepare("SELECT id, file_path, qualified_name, kind, signature FROM nodes WHERE exported = 1 ORDER BY file_path, qualified_name")
+          .all() as SurfaceRow[];
+    return rows.map((row) => ({
+      id: String(row.id),
+      filePath: String(row.file_path),
+      qualifiedName: String(row.qualified_name),
+      kind: row.kind,
+      signature: row.signature === null ? undefined : String(row.signature),
+    }));
   }
 
-  clones(bodyHash: string): GraphNode[] {
-    return this.database.prepare("SELECT * FROM nodes WHERE body_hash = ? ORDER BY file_path, start").all(bodyHash).map(rowNode);
+  clones(bodyHash: string, kind: GraphNode["kind"], limit = 6): GraphNode[] {
+    return this.database.prepare("SELECT * FROM nodes WHERE body_hash = ? AND kind = ? ORDER BY file_path, start LIMIT ?").all(bodyHash, kind, limit).map(rowNode);
   }
 
-  duplicateBodyGroups(): Set<string> {
-    const rows = this.database
-      .prepare("SELECT kind, body_hash FROM nodes WHERE body_hash IS NOT NULL GROUP BY kind, body_hash HAVING COUNT(*) > 1")
-      .all() as Array<{ kind: string; body_hash: string }>;
-    return new Set(rows.map((row) => `${row.kind}:${row.body_hash}`));
+  cloneCount(bodyHash: string, kind: GraphNode["kind"]): number {
+    const row = this.database.prepare("SELECT COUNT(*) AS count FROM nodes WHERE body_hash = ? AND kind = ?").get(bodyHash, kind) as { count: number | bigint };
+    return Number(row.count);
   }
 
   impact(symbolId: string, maxDepth = 3): ImpactResult {
-    const allEdges = this.edges();
-    const incoming = allEdges.filter((edge) => edge.toId === symbolId);
-    const outgoing = allEdges.filter((edge) => edge.fromId === symbolId);
+    const incoming = this.incomingEdges(symbolId);
+    const outgoing = this.outgoingEdges(symbolId);
     const impacted = new Set<string>();
     let frontier = [symbolId];
-    for (let depth = 0; depth < maxDepth && frontier.length; depth += 1) {
+    for (let depth = 0; depth < maxDepth && frontier.length && impacted.size < 10_000; depth += 1) {
       const next: string[] = [];
       for (const target of frontier) {
-        for (const edge of allEdges) {
-          if (edge.toId !== target || impacted.has(edge.fromId)) continue;
+        for (const edge of this.incomingEdges(target, 10_000 - impacted.size)) {
+          if (impacted.has(edge.fromId)) continue;
           impacted.add(edge.fromId);
           next.push(edge.fromId);
         }
+        if (impacted.size >= 10_000) break;
       }
       frontier = next;
     }
@@ -227,12 +293,17 @@ export class GraphStore {
 
   private migrate(): void {
     const version = Number((this.database.prepare("PRAGMA user_version").get() as any).user_version);
-    if (version > 1) throw new Error(`graph database schema ${version} is newer than supported schema 1`);
-    if (version === 1) return;
+    if (version > 2) throw new Error(`graph database schema ${version} is newer than supported schema 2`);
+    if (version === 2) return;
+    if (version === 1) {
+      this.database.exec("ALTER TABLE files ADD COLUMN content_hash TEXT; PRAGMA user_version=2;");
+      return;
+    }
     this.database.exec(`
       CREATE TABLE files(
         path TEXT PRIMARY KEY,
         source_hash TEXT NOT NULL,
+        content_hash TEXT,
         language TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -265,7 +336,7 @@ export class GraphStore {
       CREATE INDEX nodes_body_idx ON nodes(body_hash);
       CREATE INDEX edges_from_idx ON edges(from_id);
       CREATE INDEX edges_to_idx ON edges(to_id);
-      PRAGMA user_version=1;
+      PRAGMA user_version=2;
     `);
   }
 }

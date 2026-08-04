@@ -63,7 +63,7 @@ function validateHelperResult(rootDir: string, requestedPaths: string[], value: 
 const execFileAsync = promisify(execFile);
 const HELPER_PATH = fileURLToPath(new URL("./python_helper.py", import.meta.url));
 const PYTHON_BATCH_SIZE = 500;
-const PYTHON_BATCH_CONCURRENCY = 4;
+const PYTHON_BATCH_CONCURRENCY = 2;
 
 export async function scanPythonFiles(rootDir: string, paths: string[], signal?: AbortSignal, options: PythonScanOptions = {}): Promise<ScanResult> {
   if (!paths.length) {

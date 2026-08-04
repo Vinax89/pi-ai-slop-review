@@ -5,7 +5,7 @@ Pi AI-Slop Review is an evidence federation and verification extension. It repor
 ## Data flow
 
 1. Pi `tool_call` and `tool_result` hooks record content-hash-valid mutations and configured verification runs.
-2. Session or explicit paths enter the native TypeScript and isolated Python scanners.
+2. Session or explicit paths enter a reusable memory-bounded child process. Streamed content hashes key immutable cached results, TypeScript programs survive safe incremental scans, garbage collection is pressure-triggered, and recycled processes reuse Node's native compile cache; process failure returns an abstention without terminating Pi.
 3. Trusted/configured LSP, SARIF, analyzer-report, coverage, dependency-provenance, and repository-graph providers add attributed evidence; provider count alone never raises authority.
 4. The policy engine loads executable limits from `library/rules.yaml`, searches for counterevidence, applies hard risk/action caps, checks local suppressions and rule health, and abstains when evidence is insufficient.
 5. Commands, tools, TUI entries, Markdown, JSON, and SARIF expose the result with explicit `complete`, `partial`, or `abstained` status.
@@ -15,10 +15,11 @@ Pi AI-Slop Review is an evidence federation and verification extension. It repor
 
 - Pi custom session entries: branch-aware assurance ledger and rendered reviews.
 - `~/.pi/agent/ai-slop/state/<repository-id>/state.json`: baselines, suppressions, feedback, proposals, and lab summaries.
+- `~/.pi/agent/ai-slop/state/<repository-id>/sessions.sqlite`: the 100 most recent bounded session histories; legacy JSON sessions migrate on load.
 - `~/.pi/agent/ai-slop/graph/<repository-id>/context.sqlite`: content-hash-invalidated graph facts.
 - Exported source text is not stored by ordinary review. Explicit patch proposals necessarily store their user-supplied patch in private extension state.
 
-State writes use revision checks, a lock file, an atomic rename, and a previous-version backup. SQLite updates are transactional.
+State updates load once under a revision lock, bound retained history, atomically rename the JSON snapshot, and keep a previous-version backup. Session and graph SQLite updates are transactional.
 
 ## Provider authority
 
@@ -27,7 +28,7 @@ Evaluation artifacts record deterministic SHA-256 hashes for source code, execut
 
 ## Repository graph
 
-The graph records files, symbols, imports, calls, exports, tests, coverage edges, requirements, specifications, framework registrations, package entry points, and dependencies. TypeScript uses the compiler checker and resolver. Python uses `ast` under `python -I -S`. Markdown and manifests are parsed as data. Incremental updates replace all facts for one changed content hash transactionally.
+The graph records files, symbols, imports, calls, exports, tests, coverage edges, requirements, specifications, framework registrations, package entry points, and dependencies. TypeScript uses the compiler checker and resolver. Native TypeScript programs are bounded to 250 files and 4 MiB of root source; larger scans continue in batches while the graph provider abstains and marks the result partial. Production graph consumers page nodes and per-file edges, cap relationship payloads, and query only affected public-surface rows. Python uses `ast` under `python -I -S`. Markdown and manifests are parsed as data. Incremental updates replace all facts for one changed content hash transactionally.
 
 ## Default modes
 

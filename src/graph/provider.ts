@@ -2,13 +2,13 @@ import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import type { AiSlopConfig } from "../core/config.ts";
-import { createScanResult, fingerprint } from "../core/schema.ts";
+import { createScanResult, fingerprint, normalizePath } from "../core/schema.ts";
 import { offsetRange, safeProjectFile } from "../providers/files.ts";
 import { SCHEMA_VERSION, type EvidenceRecord, type FindingDraft, type ScanResult, type ScanScope, type SkippedFile, type SourceRange } from "../types.ts";
 import type { TypeScriptProjectContext } from "../typescript-scanner.ts";
 import { buildGraphFacts } from "./build.ts";
 import { GraphStore } from "./store.ts";
-import type { GraphEdge, GraphNode, PublicSurfaceEntry } from "./types.ts";
+import type { GraphNode, PublicSurfaceEntry } from "./types.ts";
 
 function matches(filePath: string, patterns: string[]): boolean {
   return patterns.some((pattern) => pathMatches(filePath, pattern));
@@ -44,11 +44,8 @@ function surfaceDelta(before: PublicSurfaceEntry[], after: PublicSurfaceEntry[])
   };
 }
 
-type SourceSnapshot = { source: string; sourceHash: string };
 
-function rangeForNode(rootDir: string, node: GraphNode, sources: Map<string, SourceSnapshot>): SourceRange | undefined {
-  const cached = sources.get(node.filePath);
-  if (cached) return offsetRange(node.filePath, cached.source, node.start, node.end, cached.sourceHash);
+function rangeForNode(rootDir: string, node: GraphNode): SourceRange | undefined {
   const file = safeProjectFile(rootDir, node.filePath);
   return file ? offsetRange(node.filePath, file.source, node.start, node.end) : undefined;
 }
@@ -56,22 +53,20 @@ function rangeForNode(rootDir: string, node: GraphNode, sources: Map<string, Sou
 function findingForNode(
   rootDir: string,
   node: GraphNode,
-  sources: Map<string, SourceSnapshot>,
   values: Omit<FindingDraft, "filePath" | "line" | "column" | "start" | "end" | "sourceHash" | "anchor"> & { anchor: string },
 ): FindingDraft | undefined {
-  const range = rangeForNode(rootDir, node, sources);
+  const range = rangeForNode(rootDir, node);
   return range ? { ...range, ...values } : undefined;
 }
 
 function evidenceForNode(
   rootDir: string,
   node: GraphNode,
-  sources: Map<string, SourceSnapshot>,
   summary: string,
   kind: EvidenceRecord["kind"],
   details: Record<string, unknown>,
 ): EvidenceRecord | undefined {
-  const source = rangeForNode(rootDir, node, sources);
+  const source = rangeForNode(rootDir, node);
   if (!source) return undefined;
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -94,11 +89,13 @@ export async function collectGraphEvidence(
   stateRoot?: string,
   mode: ScanScope["mode"] = "explicit",
   reusableProjects: TypeScriptProjectContext[] = [],
+  skipReason?: string,
 ): Promise<ScanResult> {
-  if (!config.graph.enabled) {
+  if (!config.graph.enabled || skipReason) {
+    const diagnostic = skipReason ?? "repository graph is disabled by configuration";
     return createScanResult({
       engine: "provider-federation",
-      engineVersion: "repository graph disabled",
+      engineVersion: skipReason ? "repository graph memory bounded" : "repository graph disabled",
       rootDir,
       providerId: "repository-graph",
       providerVersion: "1",
@@ -108,29 +105,22 @@ export async function collectGraphEvidence(
         version: "1",
         capabilities: ["symbols", "references", "call-hierarchy", "public-surface", "tests"],
         status: "skipped",
-        diagnostic: "disabled by configuration",
+        diagnostic,
       }],
       scannedFiles: [],
       findings: [],
-      skipped: [{ filePath: "<graph>", reason: "repository graph is disabled by configuration", providerId: "repository-graph" }],
+      skipped: [{ filePath: "<graph>", reason: diagnostic, providerId: "repository-graph" }],
     });
   }
 
   const store = new GraphStore(rootDir, stateRoot);
-  const beforeSurface = store.publicSurface();
   const findings: FindingDraft[] = [];
   const evidenceRecords: EvidenceRecord[] = [];
   const skipped: SkippedFile[] = [];
   try {
-    const built = await buildGraphFacts(rootDir, paths, config, signal, reusableProjects);
-    const sources = new Map(
-      built.facts.flatMap((facts) => facts.source === undefined ? [] : [[facts.filePath, { source: facts.source, sourceHash: facts.sourceHash }] as const]),
-    );
-    for (const [filePath, reason] of Object.entries(built.errors)) skipped.push({ filePath, reason, providerId: "repository-graph" });
-    const invalidFiles = Object.entries(built.errors)
-      .filter(([, reason]) => !/^Python graph scan (?:unavailable|aborted):?/.test(reason))
-      .map(([filePath]) => filePath);
     const root = realpathSync(rootDir);
+    const graphCache = store.cachedFiles(paths);
+    const requestedFiles = paths.map((filePath) => normalizePath(filePath.replace(/^@/, "")));
     const missingFiles = store.files().filter((filePath) => {
       const absolute = path.resolve(root, filePath);
       if (!existsSync(absolute)) return true;
@@ -140,41 +130,46 @@ export async function collectGraphEvidence(
         return true;
       }
     });
-    store.removeFiles([...new Set([...invalidFiles, ...missingFiles])]);
-    store.updateFiles(built.facts);
-    const reviewedFiles = built.facts.map((facts) => facts.filePath);
-    const reviewedFileSet = new Set(reviewedFiles);
-    const reviewedNodes = built.facts.flatMap((facts) => facts.nodes);
-    const reviewedNodeById = new Map(reviewedNodes.map((node) => [node.id, node]));
-    const rootNodeByFile = new Map(reviewedNodes.filter((node) => node.kind === "file" || node.kind === "specification").map((node) => [node.filePath, node]));
-    const allEdges = store.edges();
-    const duplicateBodyGroups = store.duplicateBodyGroups();
-    const incomingByTarget = new Map<string, GraphEdge[]>();
-    for (const graphEdge of allEdges) {
-      const incoming = incomingByTarget.get(graphEdge.toId);
-      if (incoming) incoming.push(graphEdge);
-      else incomingByTarget.set(graphEdge.toId, [graphEdge]);
+    const beforeCandidates = store.publicSurface(new Set([...requestedFiles, ...missingFiles]));
+    const changedFiles: string[] = [];
+    const built = await buildGraphFacts(rootDir, paths, config, signal, reusableProjects, graphCache, (facts) => {
+      store.updateFiles(facts);
+      changedFiles.push(...facts.map((item) => item.filePath));
+    });
+    reusableProjects.length = 0;
+    for (const [filePath, reason] of Object.entries(built.errors).sort(([left], [right]) => left.localeCompare(right))) {
+      skipped.push({ filePath, reason, providerId: "repository-graph" });
     }
-
+    const invalidFiles = Object.entries(built.errors)
+      .filter(([, reason]) => !/^Python graph scan (?:unavailable|aborted):?/.test(reason))
+      .map(([filePath]) => filePath);
+    store.removeFiles([...new Set([...invalidFiles, ...missingFiles])]);
+    const reviewedFiles = new Set([...changedFiles, ...built.cachedFiles].sort());
+    const affectedFiles = new Set([...changedFiles, ...invalidFiles, ...missingFiles]);
+    const beforeSurface = beforeCandidates.filter((entry) => affectedFiles.has(entry.filePath));
     const reportedCloneGroups = new Set<string>();
-    for (const node of reviewedNodes) {
-      if (findings.length >= config.limits.maxFindings) break;
+    reviewed: for (const page of store.nodePagesForFiles(reviewedFiles)) {
+      for (const node of page) {
+        if (findings.length >= config.limits.maxFindings) break reviewed;
       if (node.bodyHash && ["function", "class"].includes(node.kind)) {
         const cloneGroup = `${node.kind}:${node.bodyHash}`;
-        if (duplicateBodyGroups.has(cloneGroup) && !reportedCloneGroups.has(cloneGroup)) {
-          const clones = store.clones(node.bodyHash).filter((candidate) => candidate.id !== node.id && candidate.kind === node.kind);
-          if (clones.length) {
+        if (!reportedCloneGroups.has(cloneGroup)) {
+          const cloneCount = store.cloneCount(node.bodyHash, node.kind);
+          if (cloneCount > 1) {
             reportedCloneGroups.add(cloneGroup);
-            const examples = clones.slice(0, 5).map((item) => `${item.filePath}:${item.qualifiedName}`);
-            const omitted = clones.length - examples.length;
-            const finding = findingForNode(rootDir, node, sources, {
+            const examples = store.clones(node.bodyHash, node.kind)
+              .filter((candidate) => candidate.id !== node.id)
+              .slice(0, 5)
+              .map((item) => `${item.filePath}:${item.qualifiedName}`);
+            const omitted = Math.max(0, cloneCount - 1 - examples.length);
+            const finding = findingForNode(rootDir, node, {
               anchor: `duplicate:${cloneGroup}`,
               ruleId: "structure.duplicate-capability",
               classification: "waste_candidate",
               confidence: "C1",
               risk: "R2",
               maximumAction: "observe",
-              message: `'${node.qualifiedName}' has an exact normalized body match in ${clones.length} other location(s): ${examples.join(", ")}${omitted ? ` (+${omitted} more)` : ""}`,
+              message: `'${node.qualifiedName}' has an exact normalized body match in ${cloneCount - 1} other location(s): ${examples.join(", ")}${omitted ? ` (+${omitted} more)` : ""}`,
               evidence: ["repository graph found identical normalized function/class body hashes"],
               counterEvidence: [],
               unknown: ["duplicate bodies may intentionally implement separate contracts or boundaries"],
@@ -184,19 +179,21 @@ export async function collectGraphEvidence(
         }
       }
 
-      if (node.exported && ["function", "class", "variable"].includes(node.kind)) {
-        const incoming = incomingByTarget.get(node.id) ?? [];
-        const callers = incoming.filter((item) => item.kind === "calls");
-        const tests = incoming.filter((item) => item.kind === "covers");
-        const governing = (incomingByTarget.get(nodeIdForFile(node.filePath)) ?? []).filter((item) => item.kind === "governs");
-        const impact = evidenceForNode(rootDir, node, sources, `repository impact for exported '${node.qualifiedName}'`, "reference", {
-          callers: callers.map((item) => item.fromId),
-          tests: tests.map((item) => item.fromId),
-          governingSpecifications: governing.map((item) => item.fromId),
-        });
-        if (impact) evidenceRecords.push(impact);
-        if (!tests.length && mode !== "repository") {
-          const finding = findingForNode(rootDir, node, sources, {
+      if (node.exported && ["function", "class", "variable"].includes(node.kind) && (evidenceRecords.length < config.limits.maxFindings || mode !== "repository")) {
+        const callerEdges = store.incomingEdges(node.id, 101, "calls");
+        const testEdges = store.incomingEdges(node.id, 101, "covers");
+        const governingEdges = store.incomingEdges(nodeIdForFile(node.filePath), 101, "governs");
+        if (evidenceRecords.length < config.limits.maxFindings) {
+          const impact = evidenceForNode(rootDir, node, `repository impact for exported '${node.qualifiedName}'`, "reference", {
+            callers: callerEdges.slice(0, 100).map((item) => item.fromId),
+            tests: testEdges.slice(0, 100).map((item) => item.fromId),
+            governingSpecifications: governingEdges.slice(0, 100).map((item) => item.fromId),
+            truncated: callerEdges.length > 100 || testEdges.length > 100 || governingEdges.length > 100,
+          });
+          if (impact) evidenceRecords.push(impact);
+        }
+        if (!testEdges.length && mode !== "repository") {
+          const finding = findingForNode(rootDir, node, {
             anchor: `tests:${node.id}`,
             ruleId: "assurance.no-linked-tests",
             classification: "assurance_gap",
@@ -212,38 +209,46 @@ export async function collectGraphEvidence(
         }
       }
 
-      if (node.kind === "registration") {
-        const registration = evidenceForNode(rootDir, node, sources, `framework or runtime registration '${node.name}'`, "reference", node.metadata);
+      if (node.kind === "registration" && evidenceRecords.length < config.limits.maxFindings) {
+        const registration = evidenceForNode(rootDir, node, `framework or runtime registration '${node.name}'`, "reference", node.metadata);
         if (registration) evidenceRecords.push(registration);
       }
     }
+      }
 
-    for (const graphEdge of allEdges.filter((item) => item.kind === "imports" && reviewedFileSet.has(item.filePath))) {
-      if (findings.length >= config.limits.maxFindings) break;
-      const target = reviewedNodeById.get(graphEdge.toId) ?? store.node(graphEdge.toId);
-      if (!target) continue;
-      const fromLayer = layerFor(graphEdge.filePath, config);
-      const toLayer = layerFor(target.filePath, config);
-      if (!fromLayer || !toLayer || fromLayer === toLayer) continue;
-      if (config.graph.allowedEdges.includes(`${fromLayer}->${toLayer}`)) continue;
-      const sourceNode = rootNodeByFile.get(graphEdge.filePath) ?? store.nodes(graphEdge.filePath).find((item) => item.kind === "file");
-      if (!sourceNode) continue;
-      const finding = findingForNode(rootDir, sourceNode, sources, {
-        anchor: `architecture:${graphEdge.id}`,
-        ruleId: "architecture.disallowed-dependency",
-        classification: "context_conflict",
-        confidence: "C2",
-        risk: "R3",
-        maximumAction: "observe",
-        message: `${fromLayer} imports ${toLayer}, but '${fromLayer}->${toLayer}' is not allowed`,
-        evidence: ["configured architecture layers and a resolved import edge conflict"],
-        counterEvidence: [],
-        unknown: ["an explicit architecture waiver may exist outside the configured graph policy"],
-      });
-      if (finding) findings.push(finding);
+    if (config.graph.layers.length) {
+      architecture: for (const filePath of reviewedFiles) {
+        const sourceNode = store.nodes(filePath).find((item) => item.kind === "file");
+        if (!sourceNode) continue;
+        for (const page of store.edgePages(filePath)) {
+          for (const graphEdge of page) {
+            if (findings.length >= config.limits.maxFindings) break architecture;
+            if (graphEdge.kind !== "imports") continue;
+            const target = store.node(graphEdge.toId);
+            if (!target) continue;
+            const fromLayer = layerFor(graphEdge.filePath, config);
+            const toLayer = layerFor(target.filePath, config);
+            if (!fromLayer || !toLayer || fromLayer === toLayer) continue;
+            if (config.graph.allowedEdges.includes(`${fromLayer}->${toLayer}`)) continue;
+            const finding = findingForNode(rootDir, sourceNode, {
+              anchor: `architecture:${graphEdge.id}`,
+              ruleId: "architecture.disallowed-dependency",
+              classification: "context_conflict",
+              confidence: "C2",
+              risk: "R3",
+              maximumAction: "observe",
+              message: `${fromLayer} imports ${toLayer}, but '${fromLayer}->${toLayer}' is not allowed`,
+              evidence: ["configured architecture layers and a resolved import edge conflict"],
+              counterEvidence: [],
+              unknown: ["an explicit architecture waiver may exist outside the configured graph policy"],
+            });
+            if (finding) findings.push(finding);
+          }
+        }
+      }
     }
 
-    const afterSurface = store.publicSurface();
+    const afterSurface = store.publicSurface(affectedFiles);
     const publicDelta = surfaceDelta(beforeSurface, afterSurface);
     evidenceRecords.push({
       schemaVersion: SCHEMA_VERSION,
@@ -263,9 +268,9 @@ export async function collectGraphEvidence(
       providerId: "repository-graph",
       providerVersion: "1",
       kind: "reference",
-      summary: `repository graph contains ${statistics.files} file(s), ${statistics.nodes} node(s), and ${statistics.edges} edge(s)`,
+      summary: `repository graph contains ${statistics.files} file(s), ${statistics.nodes} node(s), and ${statistics.edges} edge(s); ${built.cachedFiles.length} cache hit(s), ${built.facts.length} updated`,
       strength: "C2",
-      details: statistics,
+      details: { ...statistics, cacheHits: built.cachedFiles.length, updatedFiles: built.facts.length },
     });
     return createScanResult({
       engine: "provider-federation",
@@ -275,7 +280,7 @@ export async function collectGraphEvidence(
       providerVersion: "1",
       providerCapabilities: ["symbols", "references", "call-hierarchy", "public-surface", "tests"],
       evidenceRecords,
-      scannedFiles: built.facts.map((facts) => facts.filePath),
+      scannedFiles: [...reviewedFiles],
       findings,
       skipped,
     });

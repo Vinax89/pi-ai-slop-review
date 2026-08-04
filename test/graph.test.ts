@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG, type AiSlopConfig } from "../src/core/config.ts";
 import { buildGraphFacts } from "../src/graph/build.ts";
 import { collectGraphEvidence } from "../src/graph/provider.ts";
 import { GraphStore } from "../src/graph/store.ts";
+import { scanFiles } from "../src/scan.ts";
 import { scanTypeScriptFilesWithProjects } from "../src/typescript-scanner.ts";
 
 function fixture(): { root: string; state: string; config: AiSlopConfig } {
@@ -100,6 +101,33 @@ test("graph batches parse each TypeScript project once and persist in one transa
   assert.equal(store.updateFiles(built.facts), paths.length);
   assert.equal(store.updateFiles(built.facts), 0);
   assert.equal(store.statistics().files, paths.length);
+  const nodePages = [...store.nodePages(7)];
+  assert.ok(nodePages.length > 1);
+  assert.equal(nodePages.flat().length, store.statistics().nodes);
+  const selectedPages = [...store.nodePagesForFiles(paths.slice(0, 2), 2)];
+  assert.ok(selectedPages.every((page) => page.length <= 2));
+  assert.deepEqual(new Set(selectedPages.flat().map((node) => node.filePath)), new Set(paths.slice(0, 2)));
+  const edgePages = [...store.edgePages(paths[0], 1)];
+  assert.ok(edgePages.length > 1);
+  assert.equal(edgePages.flat().length, store.edges(paths[0]).length);
+  store.close();
+});
+
+test("graph builder streams fact batches without retaining the aggregate", async () => {
+  const { root, state, config } = fixture();
+  const paths = Array.from({ length: 3 }, (_, index) => `src/stream-${index}.ts`);
+  for (const [index, filePath] of paths.entries()) {
+    writeFileSync(path.join(root, filePath), `export const stream${index} = ${index};\n`);
+  }
+  const store = new GraphStore(root, state);
+  const streamed: string[] = [];
+  const built = await buildGraphFacts(root, paths, config, undefined, [], new Map(), (facts) => {
+    streamed.push(...facts.map((item) => item.filePath));
+    store.updateFiles(facts);
+  });
+  assert.deepEqual(built.facts, []);
+  assert.deepEqual(streamed.sort(), paths);
+  assert.equal(store.statistics().files, paths.length);
   store.close();
 });
 
@@ -123,6 +151,32 @@ test("graph reuses the native TypeScript project without rediscovering configura
   }
   assert.equal(configReads, 0);
   assert.equal(built.facts.length, paths.length);
+});
+
+test("large TypeScript audits stay bounded and report the omitted graph", async () => {
+  const { root, state, config } = fixture();
+  const paths = Array.from({ length: 251 }, (_, index) => `src/value-${index}.ts`);
+  for (const [index, filePath] of paths.entries()) {
+    writeFileSync(
+      path.join(root, filePath),
+      index === 0
+        ? "function load(value: number) { return value; }\nexport function wrapper(value: number) { return load(value); }\n"
+        : `export const value${index} = ${index};\n`,
+    );
+  }
+
+  const result = await scanFiles(root, paths, undefined, "repository", {
+    config,
+    graphStateRoot: state,
+    policyStateRoot: mkdtempSync(path.join(tmpdir(), "ai-slop-policy-state-")),
+  });
+
+  assert.equal(result.scannedFiles.length, paths.length);
+  assert.equal(result.completeness?.status, "partial");
+  assert.match(result.providers.find((provider) => provider.id === "repository-graph")?.diagnostic ?? "", /memory budget/);
+  const wrapper = result.findings.find((finding) => finding.ruleId === "structure.pass-through-wrapper");
+  assert.equal(wrapper?.maximumAction, "observe");
+  assert.match(wrapper?.unknown.join(" ") ?? "", /memory-bounded/);
 });
 
 test("repository graph summarizes duplicate groups once with bounded examples", async () => {

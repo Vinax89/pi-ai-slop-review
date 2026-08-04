@@ -26,7 +26,7 @@ import { queryContext } from "./src/graph/query.ts";
 import { applyProposal, createProposal, listLaboratory, rollbackProposal, validateProposal } from "./src/lab.ts";
 import { addSuppression, recordFeedback, removeSuppression } from "./src/policy/engine.ts";
 import { formatClaims, formatDelta, formatReport, formatTimeline, formatTriage } from "./src/report.ts";
-import { scanFiles } from "./src/scan.ts";
+import { scanFilesIsolated } from "./src/isolated-scan.ts";
 import type { ClaimAssessment, ExperimentSpec, FeedbackRecord, Finding, LedgerEvent, ScanResult, ScanScope } from "./src/types.ts";
 
 const DISABLED = existsSync(fileURLToPath(new URL(".disabled", import.meta.url)));
@@ -316,7 +316,7 @@ export default async function (pi: any): Promise<void> {
     const explicit = Boolean(requestedPaths?.length);
     const paths = explicit ? requestedPaths! : trackedPaths();
     await new Promise<void>((resolve) => setImmediate(resolve));
-    const result = await scanFiles(cwd, paths, signal, mode, {
+    const result = await scanFilesIsolated(cwd, paths, signal, mode, {
       config: loadedConfig.config,
       configHash: loadedConfig.hash,
       trustedProject,
@@ -341,8 +341,8 @@ export default async function (pi: any): Promise<void> {
     const warnings = [...loadedConfig.warnings];
     try {
       const baselineName = mode === "repository" ? AUDIT_BASELINE_NAME : REVIEW_BASELINE_NAME;
-      baseline = store.load().baselines[baselineName];
       store.update((state) => {
+        baseline = state.baselines[baselineName];
         state.baselines[baselineName] = result;
       });
     } catch (error) {

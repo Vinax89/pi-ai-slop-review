@@ -1,11 +1,10 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { builtinModules } from "node:module";
 import path from "node:path";
 import * as ts from "typescript";
 
 import { isInside, normalizePath } from "./core/paths.ts";
-import { createScanResult } from "./core/schema.ts";
+import { contentHashOnce, createScanResult } from "./core/schema.ts";
 import { canonicalSymbol } from "./core/typescript.ts";
 import type { FindingConfidence, FindingDraft, ScanResult, SkippedFile } from "./types.ts";
 
@@ -13,6 +12,9 @@ const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts",
 const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
 const BUILTINS = new Set(builtinModules.flatMap((name) => [name, name.replace(/^node:/, ""), `node:${name.replace(/^node:/, "")}`,]));
 const LOG_METHODS = new Set(["debug", "error", "exception", "info", "log", "trace", "warn", "warning"]);
+const MAX_PROJECT_FILES = 250;
+const MAX_PROJECT_SOURCE_BYTES = 4 * 1024 * 1024;
+
 
 export interface TypeScriptProjectContext {
   files: string[];
@@ -21,14 +23,50 @@ export interface TypeScriptProjectContext {
   options: ts.CompilerOptions;
   configPath?: string;
   configHasErrors: boolean;
+  rootNames: string[];
+  reusedProgram: boolean;
+  referenceScopeComplete: boolean;
 }
 
 export interface TypeScriptScanOptions {
   signal?: AbortSignal;
   maxFileBytes?: number;
   maxFindings?: number;
+  previousProjects?: TypeScriptProjectContext[];
 }
 type Project = TypeScriptProjectContext;
+function withinProjectBudget(files: string[]): boolean {
+  if (files.length > MAX_PROJECT_FILES) return false;
+  let bytes = 0;
+  try {
+    for (const file of files) {
+      bytes += statSync(file).size;
+      if (bytes > MAX_PROJECT_SOURCE_BYTES) return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+export function batchTypeScriptFiles(files: string[]): string[][] {
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  let bytes = 0;
+  for (const file of files) {
+    const size = statSync(file).size;
+    if (batch.length && (batch.length >= MAX_PROJECT_FILES || bytes + size > MAX_PROJECT_SOURCE_BYTES)) {
+      batches.push(batch);
+      batch = [];
+      bytes = 0;
+    }
+    batch.push(file);
+    bytes += size;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
+
 
 interface WrapperCandidate {
   sourceFile: ts.SourceFile;
@@ -46,9 +84,6 @@ interface WrapperCandidate {
   nonCallReferences: number;
 }
 
-function hashText(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
-}
 
 function findProjectConfig(root: string, filePath: string): string | undefined {
   let directory = path.dirname(filePath);
@@ -65,10 +100,11 @@ function findProjectConfig(root: string, filePath: string): string | undefined {
   return undefined;
 }
 
-function createProject(files: string[], configPath?: string): Project {
+function createProject(files: string[], configPath?: string, previousProjects: TypeScriptProjectContext[] = []): Project {
   let options: ts.CompilerOptions;
   let rootNames: string[];
   let configHasErrors = false;
+  let referenceScopeComplete = false;
 
   if (configPath) {
     const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
@@ -82,22 +118,32 @@ function createProject(files: string[], configPath?: string): Project {
       options = { ...parsed.options, allowJs: true, noEmit: true };
       const requestedFiles = new Set(files.map(normalizePath));
       const coversProject = parsed.fileNames.every((filePath) => requestedFiles.has(normalizePath(filePath)));
-      const includeProjectFiles = !coversProject && files.some(containsWrapperCandidate);
+      const includeProjectFiles = !coversProject && withinProjectBudget(parsed.fileNames) && files.some(containsWrapperCandidate);
       rootNames = includeProjectFiles ? [...new Set([...parsed.fileNames, ...files])] : files;
+      referenceScopeComplete = coversProject || includeProjectFiles;
     }
   } else {
     options = defaultCompilerOptions();
     rootNames = files;
   }
 
-  const program = ts.createProgram({ rootNames, options });
+  const previous = previousProjects.find((project) =>
+    project.configPath === configPath &&
+    project.rootNames.length === rootNames.length &&
+    project.rootNames.every((file, index) => file === rootNames[index]) &&
+    JSON.stringify(project.options) === JSON.stringify(options)
+  );
+  const program = ts.createProgram({ rootNames, options, oldProgram: previous?.program });
   return {
     files,
+    rootNames,
     program,
     checker: program.getTypeChecker(),
     options,
     configPath,
     configHasErrors,
+    referenceScopeComplete,
+    reusedProgram: previous !== undefined,
   };
 }
 
@@ -467,7 +513,7 @@ function wrapperFindings(project: Project, root: string, wrappers: WrapperCandid
       ...(wrapper.thisBoundTarget ? ["delegated target is bound through this"] : []),
       ...(wrapper.nonCallReferences ? [`${wrapper.nonCallReferences} non-call reference(s)`] : []),
     ];
-    const canPropose = Boolean(project.configPath) && vetoes.length === 0;
+    const canPropose = Boolean(project.configPath) && project.referenceScopeComplete && vetoes.length === 0;
     const callee = wrapper.call.expression.getText(wrapper.sourceFile);
     return finding(wrapper.sourceFile, hashes.get(path.resolve(wrapper.sourceFile.fileName)) ?? "", root, wrapper.node, {
       anchor: `function:${wrapper.name.text}`,
@@ -482,7 +528,9 @@ function wrapperFindings(project: Project, root: string, wrappers: WrapperCandid
         `${wrapper.directCalls} direct call reference(s) found in the semantic project`,
       ],
       counterEvidence: vetoes,
-      unknown: project.configPath ? ["dynamic or framework registration cannot be disproven"] : ["project-wide callers are incomplete without tsconfig/jsconfig"],
+      unknown: project.referenceScopeComplete
+        ? ["dynamic or framework registration cannot be disproven"]
+        : ["project-wide callers are incomplete because TypeScript analysis was memory-bounded"],
     });
   });
 }
@@ -535,6 +583,7 @@ export function scanTypeScriptFilesWithProjects(
   const configPaths = new Map<string, string | undefined>();
   const projects: TypeScriptProjectContext[] = [];
   const maxFindings = options.maxFindings ?? Number.POSITIVE_INFINITY;
+  const retainProjects = withinProjectBudget(resolved.files);
   if (options.signal?.aborted) {
     skipped.push(...resolved.files.map((file) => ({ filePath: normalizePath(path.relative(root, file)), reason: "TypeScript scan aborted" })));
   } else {
@@ -549,47 +598,49 @@ export function scanTypeScriptFilesWithProjects(
     }
   }
 
-  for (const [key, files] of groups) {
-    if (options.signal?.aborted) break;
-    const project = createProject(files, key === "<none>" ? undefined : key);
-    projects.push(project);
-    const hashes = new Map<string, string>();
-    const validFiles = new Set<string>();
-
-    for (const file of files) {
+  for (const [key, groupFiles] of groups) {
+    for (const files of batchTypeScriptFiles(groupFiles)) {
       if (options.signal?.aborted) break;
-      const sourceFile = project.program.getSourceFile(file);
-      const display = normalizePath(path.relative(root, file));
-      if (!sourceFile) {
-        skipped.push({ filePath: display, reason: "TypeScript program did not include the file" });
-        continue;
-      }
-      const text = sourceFile.text;
-      if (isGenerated(display, text)) {
-        skipped.push({ filePath: display, reason: "generated or vendor-like file" });
-        continue;
-      }
-      const syntaxErrors = project.program.getSyntacticDiagnostics(sourceFile);
-      if (syntaxErrors.length > 0) {
-        skipped.push({ filePath: display, reason: "file has TypeScript syntax diagnostics" });
-        continue;
-      }
-      const sourceHash = hashText(text);
-      hashes.set(path.resolve(file), sourceHash);
-      validFiles.add(path.resolve(file));
-      scannedFiles.push(display);
-      if (findings.length < maxFindings) {
-        const remaining = maxFindings - findings.length;
-        findings.push(...scanImports(project, sourceFile, sourceHash, root).slice(0, remaining));
-      }
-      if (findings.length < maxFindings) {
-        const remaining = maxFindings - findings.length;
-        findings.push(...scanCatchClauses(sourceFile, sourceHash, root).slice(0, remaining));
-      }
-    }
+      const project = createProject(files, key === "<none>" ? undefined : key, options.previousProjects);
+      if (retainProjects) projects.push(project);
+      const hashes = new Map<string, string>();
+      const validFiles = new Set<string>();
 
-    if (!options.signal?.aborted && findings.length < maxFindings) {
-      findings.push(...wrapperFindings(project, root, collectWrappers(project, validFiles), hashes).slice(0, maxFindings - findings.length));
+      for (const file of files) {
+        if (options.signal?.aborted) break;
+        const sourceFile = project.program.getSourceFile(file);
+        const display = normalizePath(path.relative(root, file));
+        if (!sourceFile) {
+          skipped.push({ filePath: display, reason: "TypeScript program did not include the file" });
+          continue;
+        }
+        const text = sourceFile.text;
+        if (isGenerated(display, text)) {
+          skipped.push({ filePath: display, reason: "generated or vendor-like file" });
+          continue;
+        }
+        const syntaxErrors = project.program.getSyntacticDiagnostics(sourceFile);
+        if (syntaxErrors.length > 0) {
+          skipped.push({ filePath: display, reason: "file has TypeScript syntax diagnostics" });
+          continue;
+        }
+        const sourceHash = contentHashOnce(file, text);
+        hashes.set(path.resolve(file), sourceHash);
+        validFiles.add(path.resolve(file));
+        scannedFiles.push(display);
+        if (findings.length < maxFindings) {
+          const remaining = maxFindings - findings.length;
+          findings.push(...scanImports(project, sourceFile, sourceHash, root).slice(0, remaining));
+        }
+        if (findings.length < maxFindings) {
+          const remaining = maxFindings - findings.length;
+          findings.push(...scanCatchClauses(sourceFile, sourceHash, root).slice(0, remaining));
+        }
+      }
+
+      if (!options.signal?.aborted && findings.length < maxFindings) {
+        findings.push(...wrapperFindings(project, root, collectWrappers(project, validFiles), hashes).slice(0, maxFindings - findings.length));
+      }
     }
   }
 
