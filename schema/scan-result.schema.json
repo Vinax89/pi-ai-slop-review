@@ -4,50 +4,37 @@
   "title": "Pi AI-Slop Scan Result",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schemaVersion",
-    "scanId",
-    "generatedAt",
-    "engine",
-    "engineVersion",
-    "scope",
-    "providers",
-    "evidenceRecords",
-    "scannedFiles",
-    "findings",
-    "suppressedFindings",
-    "policyDecisions",
-    "ruleHealth",
-    "skipped"
-  ],
+  "required": ["schemaVersion", "scanId", "generatedAt", "engine", "engineVersion", "scope", "providers", "evidenceRecords", "scannedFiles", "findings", "suppressedFindings", "policyDecisions", "ruleHealth", "skipped"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "scanId": { "type": "string", "pattern": "^scan:" },
     "generatedAt": { "type": "string", "format": "date-time" },
     "engine": { "enum": ["typescript-semantic", "python-ast", "semantic-review", "provider-federation"] },
     "engineVersion": { "type": "string" },
-    "scope": {
-      "type": "object",
-      "required": ["mode", "rootHash", "contentHash", "paths"],
-      "properties": {
-        "mode": { "enum": ["session", "explicit", "delta", "repository"] },
-        "rootHash": { "type": "string" },
-        "contentHash": { "type": "string" },
-        "paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-        "baselineId": { "type": "string" }
-      }
-    },
+    "scope": { "$ref": "#/$defs/scope" },
     "providers": { "type": "array", "items": { "$ref": "#/$defs/provider" } },
     "evidenceRecords": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
     "scannedFiles": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
     "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
     "suppressedFindings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
-    "policyDecisions": { "type": "array", "items": { "type": "object" } },
-    "ruleHealth": { "type": "array", "items": { "type": "object" } },
-    "skipped": { "type": "array", "items": { "type": "object", "required": ["filePath", "reason"] } },
+    "policyDecisions": { "type": "array", "items": { "$ref": "#/$defs/policyDecision" } },
+    "ruleHealth": { "type": "array", "items": { "$ref": "#/$defs/ruleHealth" } },
+    "skipped": { "type": "array", "items": { "$ref": "#/$defs/skipped" } },
     "completeness": { "$ref": "#/$defs/completeness" }
   },
   "$defs": {
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "rootHash", "contentHash", "paths"],
+      "properties": {
+        "mode": { "enum": ["session", "explicit", "delta", "repository"] },
+        "rootHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "baselineId": { "type": "string" }
+      }
+    },
     "completeness": {
       "type": "object",
       "additionalProperties": false,
@@ -61,16 +48,20 @@
     },
     "provider": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["id", "version", "capabilities", "status"],
       "properties": {
         "id": { "type": "string" },
         "version": { "type": "string" },
-        "capabilities": { "type": "array", "items": { "type": "string" } },
-        "status": { "enum": ["completed", "degraded", "failed", "skipped"] }
+        "capabilities": { "type": "array", "items": { "enum": ["syntax", "types", "resolution", "symbols", "references", "call-hierarchy", "control-flow", "data-flow", "diagnostics", "coverage", "dependencies", "public-surface", "tests"] } },
+        "status": { "enum": ["completed", "degraded", "failed", "skipped"] },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "diagnostic": { "type": "string" }
       }
     },
     "source": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["filePath", "line", "column", "start", "end", "sourceHash"],
       "properties": {
         "filePath": { "type": "string" },
@@ -78,11 +69,12 @@
         "column": { "type": "integer", "minimum": 1 },
         "start": { "type": "integer", "minimum": 0 },
         "end": { "type": "integer", "minimum": 0 },
-        "sourceHash": { "type": "string" }
+        "sourceHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
       }
     },
     "evidence": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["schemaVersion", "id", "providerId", "providerVersion", "kind", "summary", "strength"],
       "properties": {
         "schemaVersion": { "const": 1 },
@@ -93,33 +85,72 @@
         "summary": { "type": "string" },
         "strength": { "enum": ["C1", "C2", "C3"] },
         "source": { "$ref": "#/$defs/source" },
-        "details": { "type": "object" }
+        "details": { "type": "object", "additionalProperties": true }
       }
     },
     "finding": {
-      "allOf": [
-        { "$ref": "#/$defs/source" },
-        {
-          "type": "object",
-          "required": ["schemaVersion", "id", "anchor", "ruleId", "classification", "confidence", "risk", "maximumAction", "message", "evidence", "evidenceIds", "counterEvidence", "counterEvidenceIds", "unknown"],
-          "properties": {
-            "schemaVersion": { "const": 1 },
-            "id": { "type": "string" },
-            "anchor": { "type": "string" },
-            "ruleId": { "type": "string" },
-            "classification": { "enum": ["defect", "waste_candidate", "context_conflict", "assurance_gap", "review_externality"] },
-            "confidence": { "enum": ["C1", "C2", "C3"] },
-            "risk": { "enum": ["R1", "R2", "R3"] },
-            "maximumAction": { "enum": ["ignore", "observe", "propose", "delegate-safe-fix"] },
-            "message": { "type": "string" },
-            "evidence": { "type": "array", "items": { "type": "string" } },
-            "evidenceIds": { "type": "array", "items": { "type": "string" } },
-            "counterEvidence": { "type": "array", "items": { "type": "string" } },
-            "counterEvidenceIds": { "type": "array", "items": { "type": "string" } },
-            "unknown": { "type": "array", "items": { "type": "string" } }
-          }
-        }
-      ]
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filePath", "line", "column", "start", "end", "sourceHash", "schemaVersion", "id", "anchor", "ruleId", "classification", "confidence", "risk", "maximumAction", "message", "evidence", "evidenceIds", "counterEvidence", "counterEvidenceIds", "unknown"],
+      "properties": {
+        "filePath": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 0 },
+        "sourceHash": { "type": "string" },
+        "schemaVersion": { "const": 1 },
+        "id": { "type": "string" },
+        "anchor": { "type": "string" },
+        "ruleId": { "type": "string" },
+        "classification": { "enum": ["defect", "waste_candidate", "context_conflict", "assurance_gap", "review_externality"] },
+        "confidence": { "enum": ["C1", "C2", "C3"] },
+        "risk": { "enum": ["R1", "R2", "R3"] },
+        "maximumAction": { "enum": ["ignore", "observe", "propose", "delegate-safe-fix"] },
+        "message": { "type": "string" },
+        "evidence": { "type": "array", "items": { "type": "string" } },
+        "evidenceIds": { "type": "array", "items": { "type": "string" } },
+        "counterEvidence": { "type": "array", "items": { "type": "string" } },
+        "counterEvidenceIds": { "type": "array", "items": { "type": "string" } },
+        "unknown": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "policyDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["findingId", "originalConfidence", "finalConfidence", "originalAction", "finalAction", "evidenceScore", "reasons"],
+      "properties": {
+        "findingId": { "type": "string" },
+        "originalConfidence": { "enum": ["C1", "C2", "C3"] },
+        "finalConfidence": { "enum": ["C1", "C2", "C3"] },
+        "originalAction": { "enum": ["ignore", "observe", "propose", "delegate-safe-fix"] },
+        "finalAction": { "enum": ["ignore", "observe", "propose", "delegate-safe-fix"] },
+        "evidenceScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ruleHealth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ruleId", "samples", "accepted", "rejected", "unsafeActions", "precision", "wilsonLowerBound", "selectiveThreshold", "conformalThreshold", "status"],
+      "properties": {
+        "ruleId": { "type": "string" },
+        "samples": { "type": "integer", "minimum": 0 },
+        "accepted": { "type": "integer", "minimum": 0 },
+        "rejected": { "type": "integer", "minimum": 0 },
+        "unsafeActions": { "type": "integer", "minimum": 0 },
+        "precision": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "wilsonLowerBound": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "selectiveThreshold": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "conformalThreshold": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "status": { "enum": ["insufficient-data", "healthy", "observe-only", "disabled"] }
+      }
+    },
+    "skipped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filePath", "reason"],
+      "properties": { "filePath": { "type": "string" }, "reason": { "type": "string" }, "providerId": { "type": "string" } }
     }
   }
 }

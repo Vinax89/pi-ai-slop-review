@@ -1,7 +1,7 @@
 import { createScanResult } from "../core/schema.ts";
 import type { AnalyzerReportKind } from "../core/config.ts";
 import type { FindingDraft, ScanResult, SkippedFile } from "../types.ts";
-import { safeProjectFile, sourceRange } from "./files.ts";
+import { safeProjectFile, sourceRange, validReportCoordinate } from "./files.ts";
 
 interface NormalizedDiagnostic {
   filePath: string;
@@ -15,20 +15,37 @@ interface NormalizedDiagnostic {
   fixAvailable?: boolean;
 }
 
+function coordinate(value: unknown, fallback: unknown = undefined): number {
+  if (value === undefined && fallback !== undefined) return coordinate(fallback);
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : Number.NaN;
+}
+
+function text(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function severity(value: unknown): "error" | "warning" | "note" {
+  return value === "error" || value === "warning" || value === "note"
+    ? value
+    : typeof value === "number" && Number.isSafeInteger(value) && value >= 2
+      ? "error"
+      : "warning";
+}
+
 function eslint(value: unknown): NormalizedDiagnostic[] {
   if (!Array.isArray(value)) throw new Error("ESLint report must be an array");
   return value.flatMap((file: any) =>
     Array.isArray(file?.messages)
       ? file.messages.map((message: any) => ({
-          filePath: String(file.filePath ?? ""),
-          line: Number(message.line ?? 1),
-          column: Number(message.column ?? 1),
-          endLine: Number(message.endLine ?? message.line ?? 1),
-          endColumn: Number(message.endColumn ?? message.column ?? 1),
-          rule: String(message.ruleId ?? "parser"),
-          message: String(message.message ?? "ESLint diagnostic"),
-          severity: Number(message.severity) >= 2 ? "error" : "warning",
-          fixAvailable: Boolean(message.fix || Array.isArray(message.suggestions)),
+          filePath: text(file?.filePath, ""),
+          line: coordinate(message?.line),
+          column: coordinate(message?.column),
+          endLine: coordinate(message?.endLine, message?.line),
+          endColumn: coordinate(message?.endColumn, message?.column),
+          rule: text(message?.ruleId, "parser"),
+          message: text(message?.message, "ESLint diagnostic"),
+          severity: severity(message?.severity),
+          fixAvailable: Boolean(message?.fix || Array.isArray(message?.suggestions)),
         }))
       : [],
   );
@@ -36,32 +53,40 @@ function eslint(value: unknown): NormalizedDiagnostic[] {
 
 function ruff(value: unknown): NormalizedDiagnostic[] {
   if (!Array.isArray(value)) throw new Error("Ruff report must be an array");
-  return value.map((item: any) => ({
-    filePath: String(item?.filename ?? ""),
-    line: Number(item?.location?.row ?? 1),
-    column: Number(item?.location?.column ?? 1),
-    endLine: Number(item?.end_location?.row ?? item?.location?.row ?? 1),
-    endColumn: Number(item?.end_location?.column ?? item?.location?.column ?? 1),
-    rule: String(item?.code ?? "ruff"),
-    message: String(item?.message ?? "Ruff diagnostic"),
-    severity: "warning",
-    fixAvailable: Boolean(item?.fix),
-  }));
+  return value.map((item: any) => {
+    const location = item?.location;
+    const endLocation = item?.end_location;
+    return {
+      filePath: text(item?.filename, ""),
+      line: coordinate(location?.row),
+      column: coordinate(location?.column),
+      endLine: coordinate(endLocation?.row, location?.row),
+      endColumn: coordinate(endLocation?.column, location?.column),
+      rule: text(item?.code, "ruff"),
+      message: text(item?.message, "Ruff diagnostic"),
+      severity: "warning",
+      fixAvailable: Boolean(item?.fix),
+    };
+  });
 }
 
 function pyright(value: unknown): NormalizedDiagnostic[] {
   const diagnostics = (value as any)?.generalDiagnostics;
   if (!Array.isArray(diagnostics)) throw new Error("Pyright report must contain generalDiagnostics");
-  return diagnostics.map((item: any) => ({
-    filePath: String(item?.file ?? ""),
-    line: Number(item?.range?.start?.line ?? 0) + 1,
-    column: Number(item?.range?.start?.character ?? 0) + 1,
-    endLine: Number(item?.range?.end?.line ?? item?.range?.start?.line ?? 0) + 1,
-    endColumn: Number(item?.range?.end?.character ?? item?.range?.start?.character ?? 0) + 1,
-    rule: String(item?.rule ?? "pyright"),
-    message: String(item?.message ?? "Pyright diagnostic"),
-    severity: item?.severity === "error" ? "error" : item?.severity === "warning" ? "warning" : "note",
-  }));
+  return diagnostics.map((item: any) => {
+    const start = item?.range?.start;
+    const end = item?.range?.end;
+    return {
+      filePath: text(item?.file, ""),
+      line: coordinate(typeof start?.line === "number" ? start.line + 1 : Number.NaN),
+      column: coordinate(typeof start?.character === "number" ? start.character + 1 : Number.NaN),
+      endLine: coordinate(typeof end?.line === "number" ? end.line + 1 : Number.NaN, typeof start?.line === "number" ? start.line + 1 : Number.NaN),
+      endColumn: coordinate(typeof end?.character === "number" ? end.character + 1 : Number.NaN, typeof start?.character === "number" ? start.character + 1 : Number.NaN),
+      rule: text(item?.rule, "pyright"),
+      message: text(item?.message, "Pyright diagnostic"),
+      severity: item?.severity === "error" ? "error" : item?.severity === "warning" ? "warning" : "note",
+    };
+  });
 }
 
 function knip(value: unknown): NormalizedDiagnostic[] {
@@ -76,15 +101,21 @@ function knip(value: unknown): NormalizedDiagnostic[] {
       } else if (entry && typeof entry === "object") {
         const item = entry as Record<string, unknown>;
         const filePath = typeof item.file === "string" ? item.file : typeof item.path === "string" ? item.path : "";
-        if (!filePath) continue;
+        const symbol = typeof item.symbol === "string" ? item.symbol : undefined;
+        if (!filePath) {
+          diagnostics.push({ filePath: "", line: Number.NaN, column: Number.NaN, rule: category, message: `Knip reports malformed ${category} record`, severity: "warning" });
+          continue;
+        }
         diagnostics.push({
           filePath,
-          line: Number(item.line ?? 1),
-          column: Number(item.col ?? item.column ?? 1),
-          rule: String(item.symbol ?? category),
-          message: `Knip reports ${category}${item.symbol ? `: ${String(item.symbol)}` : ""}`,
+          line: coordinate(item.line, 1),
+          column: coordinate(item.col ?? item.column, 1),
+          rule: symbol ?? category,
+          message: `Knip reports ${category}${symbol ? `: ${symbol}` : ""}`,
           severity: "warning",
         });
+      } else {
+        diagnostics.push({ filePath: "", line: Number.NaN, column: Number.NaN, rule: category, message: `Knip reports malformed ${category} record`, severity: "warning" });
       }
     }
   }
@@ -96,12 +127,14 @@ const PARSERS: Record<AnalyzerReportKind, (value: unknown) => NormalizedDiagnost
 export function importAnalyzerReports(
   rootDir: string,
   reports: Array<{ kind: AnalyzerReportKind; path: string }>,
+  maxFindings = Number.POSITIVE_INFINITY,
 ): ScanResult {
   const findings: FindingDraft[] = [];
   const scannedFiles: string[] = [];
   const skipped: SkippedFile[] = [];
   const versions = new Set<string>();
   for (const descriptor of reports) {
+    if (findings.length >= maxFindings) break;
     const report = safeProjectFile(rootDir, descriptor.path);
     if (!report) {
       skipped.push({ filePath: descriptor.path, reason: "analyzer report is missing or outside the project root", providerId: descriptor.kind });
@@ -116,6 +149,20 @@ export function importAnalyzerReports(
     }
     versions.add(descriptor.kind);
     for (const diagnostic of diagnostics) {
+      if (findings.length >= maxFindings) break;
+      if (
+        !validReportCoordinate(diagnostic.line) ||
+        !validReportCoordinate(diagnostic.column) ||
+        (diagnostic.endLine !== undefined && !validReportCoordinate(diagnostic.endLine)) ||
+        (diagnostic.endColumn !== undefined && !validReportCoordinate(diagnostic.endColumn))
+      ) {
+        skipped.push({
+          filePath: diagnostic.filePath || report.filePath,
+          reason: `${descriptor.kind} diagnostic has invalid non-finite or non-integral coordinates`,
+          providerId: descriptor.kind,
+        });
+        continue;
+      }
       const sourceFile = safeProjectFile(rootDir, diagnostic.filePath);
       if (!sourceFile) {
         skipped.push({ filePath: diagnostic.filePath, reason: `${descriptor.kind} diagnostic target is missing or outside the project root`, providerId: descriptor.kind });

@@ -15,19 +15,15 @@
         "@types/node": "24.10.0"
       },
       "engines": {
-        "node": ">=22.5.0"
+        "node": ">=22.7.0"
       },
       "peerDependencies": {
         "@earendil-works/pi-ai": "*",
-        "@earendil-works/pi-coding-agent": "*",
         "@earendil-works/pi-tui": "*",
         "typebox": "*"
       },
       "peerDependenciesMeta": {
         "@earendil-works/pi-ai": {
-          "optional": true
-        },
-        "@earendil-works/pi-coding-agent": {
           "optional": true
         },
         "@earendil-works/pi-tui": {

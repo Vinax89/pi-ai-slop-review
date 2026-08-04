@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -239,4 +239,73 @@ test("graph public surface detects signature changes incrementally", async () =>
   const result = await collectGraphEvidence(root, ["src/service.ts"], config, undefined, state);
   const surface = result.evidenceRecords.find((item) => item.summary.startsWith("public surface:"));
   assert.match(surface?.summary ?? "", /1 changed/);
+});
+
+test("graph resolves Python cross-file imports, keeps helpers non-test, and strips markdown URL suffixes", async () => {
+  const { root, config } = fixture();
+  mkdirSync(path.join(root, "pkg"));
+  writeFileSync(path.join(root, "pkg", "base.py"), "value = 1\n");
+  writeFileSync(path.join(root, "pkg", "consumer.py"), "from .base import value\n\ndef helper():\n    return value\n");
+  writeFileSync(path.join(root, "tests", "test_consumer.py"), "def test_value():\n    return 1\n\ndef helper():\n    return 2\n");
+  writeFileSync(path.join(root, "docs", "links.md"), "# REQ-2 Link\nGoverned by [base](../pkg/base.py?raw=1#L1).\n");
+  const built = await buildGraphFacts(root, ["pkg/base.py", "pkg/consumer.py", "tests/test_consumer.py", "docs/links.md"], config);
+  const importEdge = built.facts.find((item) => item.filePath === "pkg/consumer.py")?.edges.find((item) => item.kind === "imports");
+  assert.equal(importEdge?.metadata?.resolved, "pkg/base.py");
+  const testFacts = built.facts.find((item) => item.filePath === "tests/test_consumer.py");
+  assert.equal(testFacts?.nodes.find((item) => item.name === "helper")?.kind, "function");
+  assert.equal(testFacts?.nodes.find((item) => item.name === "test_value")?.kind, "test");
+  const specification = built.facts.find((item) => item.filePath === "docs/links.md");
+  assert.ok(specification?.edges.some((item) => item.kind === "governs" && item.metadata.targetPath === "pkg/base.py"));
+});
+
+test("graph isolates malformed TOML facts and invalidates TypeScript facts when tsconfig changes", async () => {
+  const { root, config } = fixture();
+  writeFileSync(path.join(root, "pyproject.toml"), "[project]\nname = \"fixture\"\n");
+  writeFileSync(path.join(root, "src", "value.ts"), "export const value = 1;\n");
+  const first = await buildGraphFacts(root, ["pyproject.toml", "src/value.ts"], config);
+  writeFileSync(path.join(root, "pyproject.toml"), "[broken");
+  const malformed = await buildGraphFacts(root, ["pyproject.toml", "src/value.ts"], config);
+  assert.equal(malformed.facts.some((item) => item.filePath === "pyproject.toml"), false);
+  assert.equal(typeof malformed.errors["pyproject.toml"], "string");
+  const before = first.facts.find((item) => item.filePath === "src/value.ts");
+  writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", strict: true, allowJs: true } }));
+  const changed = await buildGraphFacts(root, ["src/value.ts"], config);
+  const after = changed.facts[0];
+  assert.equal(before?.sourceHash, after.sourceHash);
+  assert.notEqual(before?.cacheHash, after.cacheHash);
+});
+
+
+test("graph removes facts when an existing source becomes an outside symlink", async () => {
+  const { root, state, config } = fixture();
+  const source = path.join(root, "src", "service.ts");
+  writeFileSync(source, "export function service() { return 1; }\n");
+  await collectGraphEvidence(root, ["src/service.ts"], config, undefined, state);
+  const outside = path.join(tmpdir(), `ai-slop-outside-${Date.now()}.ts`);
+  writeFileSync(outside, "export function escaped() { return 2; }\n");
+  unlinkSync(source);
+  symlinkSync(outside, source);
+  try {
+    const result = await collectGraphEvidence(root, ["src/service.ts"], config, undefined, state);
+    assert.ok(result.skipped.some((item) => item.filePath === "src/service.ts" && /outside/.test(item.reason)));
+    const store = new GraphStore(root, state);
+    assert.equal(store.files().includes("src/service.ts"), false);
+    store.close();
+  } finally {
+    unlinkSync(source);
+    unlinkSync(outside);
+  }
+});
+
+test("graph ignores headings and links inside fenced Markdown blocks", async () => {
+  const { root, config } = fixture();
+  writeFileSync(path.join(root, "src", "service.ts"), "export function service() { return 1; }\n");
+  writeFileSync(
+    path.join(root, "docs", "spec.md"),
+    "# REQ-1 Real\nGoverned by [`service`](../src/service.ts).\n\n```md\n# REQ-2 Fake\nGoverned by [`service`](../src/service.ts).\n```\n",
+  );
+  const built = await buildGraphFacts(root, ["docs/spec.md"], config);
+  const specification = built.facts[0];
+  assert.equal(specification?.nodes.filter((node) => node.kind === "requirement").length, 1);
+  assert.equal(specification?.edges.filter((edge) => edge.kind === "governs").length, 1);
 });

@@ -7,13 +7,14 @@ import {
   type FeedbackRecord,
   type Finding,
   type FindingConfidence,
+  type FindingRisk,
   type MaximumAction,
   type PolicyDecision,
   type RuleHealth,
   type ScanResult,
   type Suppression,
 } from "../types.ts";
-import { loadRulePolicies } from "./rules.ts";
+import { loadRulePolicies, type ExecutableRulePolicy } from "./rules.ts";
 
 const CONFIDENCE_ORDER: Record<FindingConfidence, number> = { C1: 1, C2: 2, C3: 3 };
 const ACTION_ORDER: Record<MaximumAction, number> = { ignore: 0, observe: 1, propose: 2, "delegate-safe-fix": 3 };
@@ -154,18 +155,69 @@ export function calculateRuleHealth(feedback: FeedbackRecord[]): RuleHealth[] {
   });
 }
 
+const RISK_ORDER: Record<FindingRisk, number> = { R1: 1, R2: 2, R3: 3 };
+
+/**
+ * Assert that a proposal is authorized by the persisted, complete latest review.
+ * This is intentionally strict: callers cannot manufacture authority by supplying
+ * finding IDs without the corresponding policy decision and positive evidence.
+ */
+export function assertProposalAuthority(
+  review: ScanResult,
+  findingIds: string[],
+  proposalRisk: FindingRisk,
+  patchPaths: string[] = [],
+): void {
+  const ids = [...new Set(findingIds.map((id) => id.trim()).filter(Boolean))];
+  if (!ids.length) throw new Error("proposal requires at least one latest-review finding ID");
+  if (review.completeness?.status !== "complete") throw new Error("proposal authority requires a complete latest review");
+  const findings = ids.map((id) => {
+    const finding = review.findings.find((item) => item.id === id);
+    if (!finding) throw new Error(`finding '${id}' was not found in the latest review`);
+    const decision = review.policyDecisions.find((item) => item.findingId === id);
+    if (!decision) throw new Error(`policy decision for finding '${id}' was not found in the latest review`);
+    return { finding, decision };
+  });
+  if (patchPaths.length) {
+    const authorizedPaths = new Set(findings.map(({ finding }) => finding.filePath));
+    const unauthorized = patchPaths.filter((filePath) => !authorizedPaths.has(filePath));
+    if (unauthorized.length) throw new Error(`proposal patch paths lack latest-review finding authority: ${unauthorized.join(", ")}`);
+  }
+  for (const { finding, decision } of findings) {
+    if (decision.finalAction === "delegate-safe-fix") {
+      if (finding.risk !== "R1" || proposalRisk !== "R1") throw new Error(`finding '${finding.id}' only permits low-risk delegation`);
+    } else if (decision.finalAction !== "propose") {
+      throw new Error(`finding '${finding.id}' policy action '${decision.finalAction}' does not authorize a proposal`);
+    }
+    if (RISK_ORDER[proposalRisk] > RISK_ORDER[finding.risk]) {
+      throw new Error(`proposal risk ${proposalRisk} exceeds finding '${finding.id}' risk ${finding.risk}`);
+    }
+    if (!finding.evidence.length || !finding.evidenceIds.length) throw new Error(`finding '${finding.id}' has no positive evidence`);
+    if (finding.counterEvidence.length || finding.counterEvidenceIds.length) throw new Error(`finding '${finding.id}' has counterevidence`);
+    const positiveEvidence = review.evidenceRecords.filter((record) => finding.evidenceIds.includes(record.id));
+    if (positiveEvidence.length !== finding.evidenceIds.length || positiveEvidence.some((record) => record.kind === "counterevidence" || record.kind === "unknown")) {
+      throw new Error(`finding '${finding.id}' positive evidence records are unavailable or invalid`);
+    }
+    const health = review.ruleHealth.find((item) => item.ruleId === finding.ruleId);
+    if (health?.status === "observe-only" || health?.status === "disabled") {
+      throw new Error(`finding '${finding.id}' local rule health is ${health.status}`);
+    }
+  }
+}
+
 export function applyPolicy(
   rootDir: string,
   input: ScanResult,
   _config: AiSlopConfig,
   stateRoot?: string,
 ): ScanResult {
-  const policies = loadRulePolicies();
+  let policies = new Map<string, ExecutableRulePolicy>();
   const store = new StateStore(rootDir, stateRoot);
   let suppressions: Suppression[] = [];
   let health: RuleHealth[] = [];
   let policyStoreDiagnostic: string | undefined;
   try {
+    policies = loadRulePolicies();
     const state = store.load();
     suppressions = state.suppressions;
     health = calculateRuleHealth(state.feedback);
@@ -192,9 +244,13 @@ export function applyPolicy(
       continue;
     }
     const discoveredCounterevidence = contextCounterevidence(original, input.evidenceRecords);
+    const discoveredCounterevidenceIds = input.evidenceRecords
+      .filter((record) => discoveredCounterevidence.some((summary) => summary.includes(record.summary)))
+      .map((record) => record.id);
     const finding: Finding = {
       ...original,
       counterEvidence: [...new Set([...original.counterEvidence, ...discoveredCounterevidence])],
+      counterEvidenceIds: [...new Set([...original.counterEvidenceIds, ...discoveredCounterevidenceIds])],
     };
     const policy = policies.get(finding.ruleId);
     const originalConfidence = finding.confidence;
@@ -246,6 +302,13 @@ export function applyPolicy(
       reasons,
     });
     findings.push(finding);
+  }
+  if (policyStoreDiagnostic) {
+    for (const finding of findings) finding.maximumAction = capAction(finding.maximumAction, "observe");
+    for (const decision of decisions) {
+      decision.finalAction = capAction(decision.finalAction, "observe");
+      decision.reasons.push("policy state unavailable; remediation authority disabled");
+    }
   }
   return {
     ...input,

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { loadConfig } from "../src/core/config.ts";
-import { createFinding, createScanResult, isScanResult } from "../src/core/schema.ts";
+import { createFinding, createScanResult, isScanResult, scanIdFor } from "../src/core/schema.ts";
 import { StateStore } from "../src/core/store.ts";
 import { evaluateCorpus, loadCorpus } from "../src/evaluation/corpus.ts";
 import type { FindingDraft } from "../src/types.ts";
@@ -60,6 +60,108 @@ test("scan results are versioned and content addressed", () => {
   assert.equal(result.evidenceRecords.length, 1);
   assert.equal(result.completeness?.status, "complete");
   assert.equal(isScanResult(result), true);
+});
+
+test("scan identity includes every scanned file content hash", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-hashes-"));
+  writeFileSync(path.join(root, "a.ts"), "const a = 1;\n");
+  writeFileSync(path.join(root, "b.ts"), "const b = 1;\n");
+  const input = {
+    engine: "semantic-review" as const,
+    engineVersion: "test",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["a.ts", "b.ts"],
+    findings: [],
+    skipped: [],
+  };
+  const first = createScanResult(input);
+  writeFileSync(path.join(root, "b.ts"), "const b = 2;\n");
+  const second = createScanResult(input);
+  assert.notEqual(first.scanId, second.scanId);
+  assert.notEqual(first.scope.contentHash, second.scope.contentHash);
+});
+
+test("scan result validation rejects malformed nested records", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-validation-"));
+  const result = createScanResult({
+    engine: "semantic-review",
+    engineVersion: "test",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: [],
+    findings: [],
+    skipped: [],
+  });
+  const malformed: unknown = structuredClone(result);
+  if (!malformed || typeof malformed !== "object" || !("providers" in malformed) || !Array.isArray(malformed.providers)) {
+    throw new Error("test fixture unexpectedly malformed");
+  }
+  const provider = malformed.providers[0];
+  if (!provider || typeof provider !== "object" || !("capabilities" in provider)) throw new Error("test provider missing");
+  provider.capabilities = ["not-a-capability"];
+  assert.equal(isScanResult(malformed), false);
+});
+
+test("scan identity includes finding and policy payloads", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-identity-"));
+  const base = createScanResult({
+    engine: "semantic-review",
+    engineVersion: "test",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: [],
+    findings: [draft(1, 0)],
+    skipped: [],
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const changedFinding = createScanResult({
+    engine: "semantic-review",
+    engineVersion: "test",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: [],
+    findings: [{ ...draft(1, 0), message: "A different payload" }],
+    skipped: [],
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  assert.notEqual(base.scanId, changedFinding.scanId);
+  const changedPolicy = structuredClone(base);
+  changedPolicy.policyDecisions = [{
+    findingId: base.findings[0].id,
+    originalConfidence: "C2",
+    finalConfidence: "C1",
+    originalAction: "observe",
+    finalAction: "observe",
+    evidenceScore: 0.5,
+    reasons: ["focused regression"],
+  }];
+  changedPolicy.scanId = scanIdFor(changedPolicy);
+  assert.notEqual(base.scanId, changedPolicy.scanId);
+});
+
+test("scan result validation enforces published bounds and closed records", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-validation-invariants-"));
+  const result = createScanResult({
+    engine: "semantic-review",
+    engineVersion: "test",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: [],
+    findings: [draft(1, 0)],
+    skipped: [],
+  });
+  const invalidCoordinate = structuredClone(result);
+  invalidCoordinate.findings[0].line = 0;
+  assert.equal(isScanResult(invalidCoordinate), false);
+  const extraProperty = structuredClone(result) as typeof result & { unexpected?: boolean };
+  extraProperty.unexpected = true;
+  assert.equal(isScanResult(extraProperty), false);
 });
 
 test("state store uses revision checks and keeps repository state outside the project", () => {
@@ -120,10 +222,34 @@ test("state store recovers from a corrupt live file and migrates additive v1 fie
     feedback: [],
     baselines: { main: legacyScan },
   }));
+
   const migrated = migrationStore.load();
   assert.deepEqual(migrated.proposals, []);
   assert.deepEqual(migrated.labRuns, []);
   assert.equal(migrated.baselines.main.completeness?.status, "complete");
+});
+test("state clear invalidates stale snapshots without blocking fresh updates", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-state-clear-"));
+  const stateRoot = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-state-clear-root-"));
+  const store = new StateStore(root, stateRoot);
+  store.update((state) => { state.revision = state.revision; });
+  const stale = store.load();
+  store.clear();
+  assert.equal(store.load().revision, 0);
+  assert.throws(() => store.save(stale), /invalidated by clear/);
+  assert.equal(store.update((state) => { state.feedback = []; }).revision, 1);
+});
+
+test("state save preserves a valid backup after recovering a corrupt primary", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-slop-state-recovery-"));
+  const stateRoot = mkdtempSync(path.join(tmpdir(), "ai-slop-state-root-"));
+  const store = new StateStore(root, stateRoot);
+  store.update(() => undefined);
+  store.update(() => undefined);
+  const backup = readFileSync(store.backupPath, "utf8");
+  writeFileSync(store.statePath, "{broken", "utf8");
+  store.update(() => undefined);
+  assert.equal(readFileSync(store.backupPath, "utf8"), backup);
 });
 
 test("state store refuses a lock owned by a live process", () => {
@@ -146,6 +272,25 @@ test("project configuration is ignored until explicitly trusted", () => {
   const trusted = loadConfig(root, { globalPath, trustProjectConfig: true });
   assert.equal(trusted.config.network.enabled, true);
 });
+test("configuration overlays preserve inherited LSP and experiment settings while warning on malformed values", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-slop-config-overlay-"));
+  const globalPath = path.join(root, "global.json");
+  mkdirSync(path.join(root, ".pi"));
+  writeFileSync(globalPath, JSON.stringify({
+    execution: { lspServers: { typescript: ["node", "--token", "global"], python: ["python3"] } },
+    experiments: { smt: true },
+  }));
+  writeFileSync(path.join(root, ".pi", "ai-slop.json"), JSON.stringify({
+    execution: { lspServers: { typescript: "malformed" } },
+    experiments: { translationValidation: false, smt: "malformed" },
+  }));
+  const loaded = loadConfig(root, { globalPath, trustProjectConfig: true });
+  assert.deepEqual(loaded.config.execution.lspServers.python, ["python3"]);
+  assert.deepEqual(loaded.config.execution.lspServers.typescript, ["node", "--token", "global"]);
+  assert.equal(loaded.config.experiments.smt, true);
+  assert.equal(loaded.config.experiments.translationValidation, false);
+  assert.match(loaded.warnings.join("\n"), /invalid LSP command|invalid experiment flag/);
+});
 
 test("corpus loader and evaluator count unsafe hard-negative actions", async () => {
   const cases = loadCorpus(new URL("../library/cases.jsonl", import.meta.url).pathname);
@@ -158,7 +303,7 @@ test("corpus loader and evaluator count unsafe hard-negative actions", async () 
       providerId: "test",
       providerVersion: "1",
       scannedFiles: ["input.ts"],
-      findings: [{ ...draft(1, 0), ruleId: corpusCase.rule_id, maximumAction: corpusCase.expected_action }],
+      findings: [{ ...draft(1, 0), anchor: corpusCase.anchor, ruleId: corpusCase.rule_id, maximumAction: corpusCase.expected_action }],
       skipped: [],
     }),
   );

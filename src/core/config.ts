@@ -1,8 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
+import { constants, existsSync, openSync, closeSync, fstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { hasSymlinkPath } from "./paths.ts";
+import { redactConfig, redactSensitive } from "./redaction.ts";
 import { canonicalJson, sha256 } from "./schema.ts";
+export { redactConfig };
 
 export interface VerificationCommandConfig {
   pattern: string;
@@ -156,51 +159,102 @@ function mergeConfig(base: AiSlopConfig, value: unknown, warnings: string[], sou
   const graph = object(input.graph);
   const lab = object(input.lab);
   const verification = object(input.verification);
-  const commands = Array.isArray(verification?.commands)
-    ? verification.commands.flatMap((item) => {
-        const entry = object(item);
-        if (
-          !entry ||
-          typeof entry.pattern !== "string" ||
-          typeof entry.kind !== "string" ||
-          !Array.isArray(entry.authoritativeFor) ||
-          !entry.authoritativeFor.every((value) => typeof value === "string")
-        ) {
-          warnings.push(`${source}: ignored invalid verification command`);
-          return [];
-        }
-        const kinds = new Set<VerificationCommandConfig["kind"]>([
-          "build",
-          "format",
-          "lint",
-          "typecheck",
-          "unit-test",
-          "integration-test",
-          "security",
-          "custom",
-        ]);
-        if (!kinds.has(entry.kind as VerificationCommandConfig["kind"])) {
-          warnings.push(`${source}: ignored verification command with unknown kind`);
-          return [];
-        }
-        return [{
-          pattern: entry.pattern,
-          kind: entry.kind as VerificationCommandConfig["kind"],
-          authoritativeFor: entry.authoritativeFor as string[],
-        }];
-      })
-    : base.verification.commands;
+  for (const [name, value] of Object.entries({
+    network: input.network,
+    execution: input.execution,
+    limits: input.limits,
+    providers: input.providers,
+    graph: input.graph,
+    lab: input.lab,
+    verification: input.verification,
+  })) {
+    if (value !== undefined && !object(value)) warnings.push(`${source}: ignored invalid ${name} section`);
+  }
+  if (network?.enabled !== undefined && typeof network.enabled !== "boolean") warnings.push(`${source}: ignored invalid network.enabled`);
+  if (network?.registries !== undefined && (!Array.isArray(network.registries) || !network.registries.every((item) => typeof item === "string"))) {
+    warnings.push(`${source}: ignored invalid network.registries`);
+  }
+  if (execution?.trusted !== undefined && typeof execution.trusted !== "boolean") warnings.push(`${source}: ignored invalid execution.trusted`);
+  if (execution?.commands !== undefined && (!Array.isArray(execution.commands) || !execution.commands.every((item) => typeof item === "string"))) {
+    warnings.push(`${source}: ignored invalid execution.commands`);
+  }
+  if (input.defaultScope !== undefined && input.defaultScope !== "delta" && input.defaultScope !== "session") warnings.push(`${source}: ignored invalid defaultScope`);
+  if (providers?.sarif !== undefined && (!Array.isArray(providers.sarif) || !providers.sarif.every((item) => typeof item === "string"))) {
+    warnings.push(`${source}: ignored invalid providers.sarif`);
+  }
+  if (lab?.enabled !== undefined && typeof lab.enabled !== "boolean") warnings.push(`${source}: ignored invalid lab.enabled`);
+  if (graph?.enabled !== undefined && typeof graph.enabled !== "boolean") warnings.push(`${source}: ignored invalid graph.enabled`);
+  if (limits) {
+    for (const key of ["maxFiles", "maxFileBytes", "commandTimeoutMs", "maxOutputBytes", "maxFindings"]) {
+      const value = limits[key];
+      if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) <= 0)) warnings.push(`${source}: ignored invalid limits.${key}`);
+    }
+  }
+  const commandInput = verification?.commands;
+  const commands = commandInput === undefined
+    ? base.verification.commands
+    : Array.isArray(commandInput)
+      ? commandInput.flatMap((item) => {
+          const entry = object(item);
+          if (
+            !entry ||
+            typeof entry.pattern !== "string" ||
+            typeof entry.kind !== "string" ||
+            !Array.isArray(entry.authoritativeFor) ||
+            !entry.authoritativeFor.every((value) => typeof value === "string")
+          ) {
+            warnings.push(`${source}: ignored invalid verification command`);
+            return [];
+          }
+          const kinds = new Set<VerificationCommandConfig["kind"]>([
+            "build",
+            "format",
+            "lint",
+            "typecheck",
+            "unit-test",
+            "integration-test",
+            "security",
+            "custom",
+          ]);
+          if (!kinds.has(entry.kind as VerificationCommandConfig["kind"])) {
+            warnings.push(`${source}: ignored verification command with unknown kind`);
+            return [];
+          }
+          return [{
+            pattern: entry.pattern,
+            kind: entry.kind as VerificationCommandConfig["kind"],
+            authoritativeFor: entry.authoritativeFor as string[],
+          }];
+        })
+      : (warnings.push(`${source}: ignored invalid verification command list`), base.verification.commands);
   const lspServers = object(execution?.lspServers);
-  const configuredServers = lspServers
-    ? Object.fromEntries(
-        Object.entries(lspServers).flatMap(([language, command]) =>
-          Array.isArray(command) && command.every((part) => typeof part === "string") && command.length
-            ? [[language, command as string[]]]
-            : [],
-        ),
-      )
-    : base.execution.lspServers;
-  const experiments = object(input.experiments);
+  let configuredServers = { ...base.execution.lspServers };
+  if (execution?.lspServers !== undefined) {
+    if (!lspServers) {
+      warnings.push(`${source}: ignored invalid execution.lspServers`);
+    } else {
+      for (const [language, command] of Object.entries(lspServers)) {
+        if (Array.isArray(command) && command.length > 0 && command.every((part) => typeof part === "string" && !part.includes("\0"))) {
+          configuredServers[language] = command as string[];
+        } else {
+          warnings.push(`${source}: ignored invalid LSP command for ${language}`);
+        }
+      }
+    }
+  }
+  const experiments = input.experiments;
+  const experimentObject = object(experiments);
+  let configuredExperiments = { ...base.experiments };
+  if (experiments !== undefined) {
+    if (!experimentObject) {
+      warnings.push(`${source}: ignored invalid experiments section`);
+    } else {
+      for (const [name, enabled] of Object.entries(experimentObject)) {
+        if (typeof enabled === "boolean") configuredExperiments[name] = enabled;
+        else warnings.push(`${source}: ignored invalid experiment flag ${name}`);
+      }
+    }
+  }
   return {
     schemaVersion: 1,
     defaultScope: input.defaultScope === "delta" || input.defaultScope === "session" ? input.defaultScope : base.defaultScope,
@@ -252,9 +306,7 @@ function mergeConfig(base: AiSlopConfig, value: unknown, warnings: string[], sou
       layers: parseLayers(graph?.layers, warnings, source, base.graph.layers),
       allowedEdges: stringArray(graph?.allowedEdges, base.graph.allowedEdges),
     },
-    experiments: experiments
-      ? Object.fromEntries(Object.entries(experiments).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"))
-      : base.experiments,
+    experiments: configuredExperiments,
     verification: { commands },
     limits: {
       maxFiles: positiveInteger(limits?.maxFiles, base.limits.maxFiles),
@@ -271,9 +323,22 @@ function positiveInteger(value: unknown, fallback: number): number {
 }
 
 function readConfigFile(filePath: string, config: AiSlopConfig, warnings: string[]): AiSlopConfig {
+  if (hasSymlinkPath(filePath)) {
+    warnings.push(`${filePath}: ignored symlinked configuration path`);
+    return config;
+  }
   if (!existsSync(filePath)) return config;
   try {
-    return mergeConfig(config, JSON.parse(readFileSync(filePath, "utf8")), warnings, filePath);
+    const fd = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      if (!fstatSync(fd).isFile()) {
+        warnings.push(`${filePath}: ignored non-file configuration path`);
+        return config;
+      }
+      return mergeConfig(config, JSON.parse(readFileSync(fd, "utf8")), warnings, filePath);
+    } finally {
+      closeSync(fd);
+    }
   } catch (error) {
     warnings.push(`${filePath}: ${(error as Error).message}`);
     return config;
@@ -299,5 +364,10 @@ export function loadConfig(
   } else if (existsSync(projectPath)) {
     warnings.push(`${projectPath}: ignored until project configuration is explicitly trusted`);
   }
-  return { config, hash: sha256(canonicalJson(config)), sources, warnings };
+  return {
+    config,
+    hash: sha256(canonicalJson(config)),
+    sources: sources.map(redactSensitive),
+    warnings: warnings.map(redactSensitive),
+  };
 }

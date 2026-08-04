@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.ts";
+import { DEFAULT_CONFIG, loadConfig, redactConfig } from "../src/core/config.ts";
 import { discoverRepositoryFiles } from "../src/core/discovery.ts";
 import { createScanResult, isScanResult } from "../src/core/schema.ts";
-import { diagnose } from "../src/diagnostics.ts";
+import { StateStore } from "../src/core/store.ts";
+import { diagnose, redactSensitive } from "../src/diagnostics.ts";
 import { toMarkdown, toSarif, writeExport } from "../src/export.ts";
 import { importSarif } from "../src/providers/sarif.ts";
 import { formatReport } from "../src/report.ts";
@@ -137,7 +138,32 @@ test("scan completeness distinguishes complete, partial, and abstained outcomes"
     findings: [],
     skipped: [{ filePath: "<graph>", reason: "repository graph is disabled by configuration" }],
   });
-  assert.equal(disabled.completeness?.status, "complete");
+  assert.equal(disabled.completeness?.status, "partial");
+});
+
+test("truncated repository audits persist and export partial completeness", () => {
+  const root = fixture();
+  const truncated = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [],
+    skipped: [{ filePath: "<repository-discovery>", reason: "repository discovery stopped at configured file limit", providerId: "repository-discovery" }],
+  });
+  assert.equal(truncated.completeness?.status, "partial");
+  assert.match(truncated.completeness?.reasons.join(" ") ?? "", /skipped or omitted/);
+  const stateRoot = mkdtempSync(path.join(tmpdir(), "ai-slop-interface-state-"));
+  new StateStore(root, stateRoot).update((state) => {
+    state.baselines["last-audit"] = truncated;
+  });
+  assert.equal(new StateStore(root, stateRoot).load().baselines["last-audit"].completeness?.status, "partial");
+  assert.equal(JSON.stringify(toSarif(truncated)).includes('"executionSuccessful":false'), true);
+  const jsonPath = writeExport(root, truncated, "json", "reports/truncated.json");
+  assert.equal(JSON.parse(readFileSync(jsonPath, "utf8")).completeness.status, "partial");
+  assert.match(toMarkdown(truncated), /must not be interpreted as a clean scan/);
 });
 
 test("Markdown reports rank findings by weighted severity and retain review evidence", () => {
@@ -233,4 +259,33 @@ test("diagnostics report safe defaults and runtime/store health without enabling
   assert.equal(report.executionTrusted, false);
   assert.ok(report.checks.some((check) => check.name === "rules" && check.ok));
   assert.ok(report.checks.some((check) => check.name === "state" && check.ok));
+});
+test("diagnostics redact credential URLs and secret-bearing LSP arguments", () => {
+  const root = fixture();
+  const loaded = loadConfig(root, { globalPath: path.join(root, "missing.json") });
+  loaded.config.execution.lspServers.typescript = [
+    process.execPath,
+    "--token", "token-value",
+    "https://user:password@example.test/?api_key=key-value",
+  ];
+  loaded.warnings.push("credential=https://user:password@example.test");
+  const report = diagnose(root, loaded);
+  const details = report.checks.map((check) => check.detail).join("\n") + report.warnings.join("\n");
+  assert.equal(details.includes("token-value"), false);
+  assert.equal(details.includes("password@example"), false);
+  assert.equal(details.includes("key-value"), false);
+  assert.equal(redactSensitive("--password hunter"), "--password <redacted>");
+  assert.equal(report.ok, false);
+});
+
+test("redaction covers authorization headers, AWS credentials, and JSON secret fields", () => {
+  const value = redactSensitive(
+    'Authorization: Bearer bearer-secret AWS_ACCESS_KEY_ID=AKIAABCDEFGHIJKLMNOP AWS_SECRET_ACCESS_KEY=aws-secret {"password":"json-secret","clientSecret":"another-secret","accessKeyId":"json-aws-id"}',
+  );
+  assert.equal(value.includes("bearer-secret"), false);
+  assert.equal(value.includes("aws-secret"), false);
+  assert.equal(value.includes("json-aws-id"), false);
+  assert.equal(value.includes("json-secret"), false);
+  assert.equal(value.includes("another-secret"), false);
+  assert.deepEqual(redactConfig({ token: "json-secret", safe: "value" }), { token: "<redacted>", safe: "value" });
 });

@@ -61,6 +61,14 @@ test("equality saturation remains advisory when the configured domain is not exh
   assert.equal(result.bounded, true);
 });
 
+test("counterexamples become bounded regression cases without corrupting != operators", () => {
+  const result = runExpressionExperiment(spec({ original: "x != 0", candidate: "x == 0" }));
+  assert.equal(result.status, "refuted");
+  assert.ok(result.generatedRegressionCases.length > 0);
+  assert.match(result.generatedRegressionTests[0], /!==/);
+  assert.doesNotMatch(result.generatedRegressionTests[0], /!===/);
+});
+
 test("counterexamples become bounded regression cases", () => {
   const result = runExpressionExperiment(spec({ original: "x + 1", candidate: "x + 2" }));
   assert.equal(result.status, "refuted");
@@ -74,6 +82,7 @@ test("property and metamorphic checks are evaluated for both original and candid
     spec({
       original: "x * x",
       candidate: "x * x",
+
       properties: ["result >= 0"],
       metamorphic: [{ name: "sign symmetry", transform: { x: "-x" }, relation: "equal" }],
     }),
@@ -81,6 +90,22 @@ test("property and metamorphic checks are evaluated for both original and candid
   assert.equal(result.status, "verified");
   assert.equal(result.metamorphic[0].passed, true);
   assert.equal(result.invariants.candidate.nonnegative, true);
+});
+test("mixed boolean operands are rejected instead of coerced", () => {
+  const result = runExpressionExperiment(spec({ original: "true && 1", candidate: "true && 1", variables: [] }));
+  assert.equal(result.status, "abstained");
+  assert.match(result.diagnostic ?? "", /expects booleans/);
+});
+
+test("properties cannot pass vacuously when an expression errors", () => {
+  const result = runExpressionExperiment(spec({
+    original: "x / x",
+    candidate: "x / x",
+    variables: [{ name: "x", type: "integer", minimum: 0, maximum: 0 }],
+    properties: ["result != 0"],
+  }));
+  assert.equal(result.status, "refuted");
+  assert.ok(result.counterexamples.some((item) => item.property === "(result != 0)"));
 });
 
 test("unsupported or unsafe expression syntax abstains explicitly", () => {
@@ -93,20 +118,26 @@ test("unsupported or unsafe expression syntax abstains explicitly", () => {
 test("SMT and translation-validation adapters require exact configured commands and parse bounded verdicts", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "ai-slop-formal-"));
   const smtServer = path.join(directory, "smt.cjs");
+  const failingSmtServer = path.join(directory, "smt-failing.cjs");
   const aliveServer = path.join(directory, "alive.cjs");
   writeFileSync(smtServer, "let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{if(!input.includes('(check-sat)'))process.exit(2);console.log('unsat');});\n");
+  writeFileSync(failingSmtServer, "process.stdin.resume();process.stdin.on('end',()=>{console.log('unsat');process.exit(7);});\n");
   writeFileSync(aliveServer, "let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{if(!input.includes('define'))process.exit(2);console.log('Transformation seems to be correct!');});\n");
   const config = structuredClone(DEFAULT_CONFIG);
   config.execution.trusted = true;
   config.experiments.smt = true;
   config.experiments.translationValidation = true;
   const smtCommand = [process.execPath, smtServer];
+  const failingSmtCommand = [process.execPath, failingSmtServer];
   const aliveCommand = [process.execPath, aliveServer];
-  config.execution.commands = [smtCommand.join(" "), aliveCommand.join(" ")];
+  config.execution.commands = [smtCommand.join(" "), failingSmtCommand.join(" "), aliveCommand.join(" ")];
 
   const smt = await runSmtEquivalence(spec(), smtCommand, config, true);
   assert.equal(smt.status, "verified");
   assert.equal(smt.engine, "smt");
+  const failingSmt = await runSmtEquivalence(spec(), failingSmtCommand, config, true);
+  assert.equal(failingSmt.status, "abstained");
+  assert.match(failingSmt.output, /exited with code 7/);
   const translation = await runTranslationValidation("define i32 @src(i32 %x) { ret i32 %x }", aliveCommand, config, true);
   assert.equal(translation.status, "verified");
   const blocked = await runSmtEquivalence(spec(), smtCommand, config, false);

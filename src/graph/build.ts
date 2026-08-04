@@ -203,6 +203,16 @@ function extractTypescript(
       program = ts.createProgram({ rootNames: project.rootNames, options });
       checker = program.getTypeChecker();
     }
+    let compilerContext = JSON.stringify(options);
+    const contextPath = reusable?.configPath ?? (key === "<none>" || key.startsWith("<reusable:") ? undefined : key);
+    if (contextPath) {
+      try {
+        compilerContext += `\0${readFileSync(contextPath, "utf8")}`;
+      } catch {
+        compilerContext += `\0${contextPath}`;
+      }
+    }
+    const compilerContextHash = sha256(compilerContext);
     for (const absolutePath of files) {
       const sourceFile = program.getSourceFile(absolutePath);
       if (!sourceFile) continue;
@@ -308,7 +318,7 @@ function extractTypescript(
         if (!current || (!current.bodyHash && graphNode.bodyHash)) uniqueNodes.set(graphNode.id, graphNode);
       }
       const uniqueEdges = [...new Map(edges.map((graphEdge) => [graphEdge.id, graphEdge])).values()];
-      facts.push({ filePath, sourceHash: sha256(source), source, language: "typescript", nodes: [...uniqueNodes.values()], edges: uniqueEdges });
+      facts.push({ filePath, sourceHash: sha256(source), cacheHash: sha256(`${sha256(source)}\0${compilerContextHash}`), source, language: "typescript", nodes: [...uniqueNodes.values()], edges: uniqueEdges });
     }
   }
   return facts;
@@ -318,18 +328,109 @@ interface PythonGraphOutput {
   files: Record<string, { nodes: Array<Omit<GraphNode, "id" | "filePath">>; edges: Array<{ from: string; to: string; kind: GraphEdge["kind"]; confidence: GraphEdge["confidence"]; metadata: Record<string, unknown> }> }>;
   errors: Record<string, string>;
 }
-
-async function runPythonGraphHelper(rootDir: string, paths: string[], signal?: AbortSignal): Promise<PythonGraphOutput> {
-  const { stdout } = await execFileAsync(process.env.PI_AI_SLOP_PYTHON ?? "python3", ["-I", "-S", PYTHON_HELPER, rootDir, ...paths], {
-    encoding: "utf8",
-    maxBuffer: 8 * 1024 * 1024,
-    timeout: 30_000,
-    signal,
-  });
-  return JSON.parse(stdout) as PythonGraphOutput;
+function validatePythonGraphOutput(rootDir: string, requestedPaths: string[], value: unknown): PythonGraphOutput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Python graph helper returned a non-object JSON value");
+  const document = value as Record<string, unknown>;
+  if (!document.files || typeof document.files !== "object" || Array.isArray(document.files)) throw new Error("Python graph helper JSON must contain an object files field");
+  if (!document.errors || typeof document.errors !== "object" || Array.isArray(document.errors)) throw new Error("Python graph helper JSON must contain an object errors field");
+  const requested = new Set(requestedPaths.map((filePath) => normalizePath(filePath.replace(/^@/, ""))));
+  const files: PythonGraphOutput["files"] = {};
+  const errors: Record<string, string> = {};
+  const validatePath = (rawPath: string): string => {
+    const filePath = normalizePath(rawPath);
+    const absolute = path.resolve(rootDir, filePath);
+    if (path.isAbsolute(rawPath) || !requested.has(filePath) || !normalizePath(absolute).startsWith(`${normalizePath(rootDir)}/`)) {
+      throw new Error(`Python graph helper returned an invalid path: ${rawPath}`);
+    }
+    return filePath;
+  };
+  for (const [rawPath, raw] of Object.entries(document.files)) {
+    const filePath = validatePath(rawPath);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`Python graph helper file entry is not an object: ${filePath}`);
+    const item = raw as Record<string, unknown>;
+    if (!Array.isArray(item.nodes) || !Array.isArray(item.edges)) throw new Error(`Python graph helper file entry has invalid nodes or edges: ${filePath}`);
+    for (const node of item.nodes) {
+      if (!node || typeof node !== "object" || Array.isArray(node)) throw new Error(`Python graph helper returned an invalid node: ${filePath}`);
+      const candidate = node as Record<string, unknown>;
+      if (typeof candidate.kind !== "string" || !["file", "function", "class", "variable", "import", "test", "specification", "requirement", "registration", "dependency", "external"].includes(candidate.kind) ||
+        typeof candidate.name !== "string" || typeof candidate.qualifiedName !== "string" ||
+        typeof candidate.start !== "number" || !Number.isSafeInteger(candidate.start) || candidate.start < 0 ||
+        typeof candidate.end !== "number" || !Number.isSafeInteger(candidate.end) || candidate.end < candidate.start ||
+        typeof candidate.exported !== "boolean" || !candidate.metadata || typeof candidate.metadata !== "object" || Array.isArray(candidate.metadata)) {
+        throw new Error(`Python graph helper returned a malformed node: ${filePath}`);
+      }
+    }
+    for (const edge of item.edges) {
+      if (!edge || typeof edge !== "object" || Array.isArray(edge)) throw new Error(`Python graph helper returned an invalid edge: ${filePath}`);
+      const candidate = edge as Record<string, unknown>;
+      if (typeof candidate.from !== "string" || typeof candidate.to !== "string" ||
+        !["contains", "imports", "calls", "exports", "covers", "governs", "registers", "depends-on", "duplicates"].includes(String(candidate.kind)) ||
+        !["C1", "C2", "C3"].includes(String(candidate.confidence)) ||
+        !candidate.metadata || typeof candidate.metadata !== "object" || Array.isArray(candidate.metadata)) {
+        throw new Error(`Python graph helper returned a malformed edge: ${filePath}`);
+      }
+    }
+    files[filePath] = raw as PythonGraphOutput["files"][string];
+  }
+  for (const [rawPath, reason] of Object.entries(document.errors)) {
+    const filePath = validatePath(rawPath);
+    if (typeof reason !== "string") throw new Error(`Python graph helper returned a non-string error: ${filePath}`);
+    errors[filePath] = reason;
+  }
+  for (const filePath of requested) {
+    if (!files[filePath] && !errors[filePath]) errors[filePath] = "Python graph helper omitted this requested path";
+  }
+  return { files, errors };
 }
 
-async function extractPython(rootDir: string, paths: string[], signal?: AbortSignal): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string> }> {
+
+async function runPythonGraphHelper(
+  rootDir: string,
+  paths: string[],
+  signal?: AbortSignal,
+  maxFileBytes = 1024 * 1024,
+  maxOutputBytes = 8 * 1024 * 1024,
+): Promise<PythonGraphOutput> {
+  const { stdout } = await execFileAsync(process.env.PI_AI_SLOP_PYTHON ?? "python3", ["-I", "-S", PYTHON_HELPER, rootDir, ...paths], {
+    encoding: "utf8",
+    maxBuffer: maxOutputBytes,
+    timeout: 30_000,
+    signal,
+    env: { ...process.env, PI_AI_SLOP_MAX_FILE_BYTES: String(maxFileBytes) },
+  });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch (error) {
+    throw new Error(`Python graph helper returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return validatePythonGraphOutput(rootDir, paths, parsed);
+}
+
+function resolvePythonImport(filePath: string, module: string, level: number, knownFiles: Set<string>): string | undefined {
+  const modulePath = module.split(".").filter(Boolean).join("/");
+  if (!modulePath) return undefined;
+  const relativeBase = path.dirname(filePath);
+  const packageBase = level > 0
+    ? Array.from({ length: Math.max(0, level - 1) }, (_, index) => index).reduce((current) => path.dirname(current), relativeBase)
+    : "";
+  const roots = level > 0 ? [packageBase] : ["", "src"];
+  for (const root of roots) {
+    for (const candidate of [`${path.join(root, modulePath)}.py`, path.join(root, modulePath, "__init__.py")]) {
+      const normalized = normalizePath(candidate);
+      if (knownFiles.has(normalized)) return normalized;
+    }
+  }
+  return undefined;
+}
+
+async function extractPython(
+  rootDir: string,
+  paths: string[],
+  signal?: AbortSignal,
+  maxFileBytes = 1024 * 1024,
+  maxOutputBytes = 8 * 1024 * 1024,
+): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string> }> {
   if (!paths.length) return { facts: [], errors: {} };
   const batches = Array.from({ length: Math.ceil(paths.length / PYTHON_BATCH_SIZE) }, (_, index) =>
     paths.slice(index * PYTHON_BATCH_SIZE, (index + 1) * PYTHON_BATCH_SIZE));
@@ -345,7 +446,7 @@ async function extractPython(rootDir: string, paths: string[], signal?: AbortSig
         continue;
       }
       try {
-        outputs[index] = await runPythonGraphHelper(rootDir, batch, signal);
+        outputs[index] = await runPythonGraphHelper(rootDir, batch, signal, maxFileBytes, maxOutputBytes);
       } catch (error) {
         const message = signal?.aborted ? "Python graph scan aborted" : `Python graph scan unavailable: ${error instanceof Error ? error.message : String(error)}`;
         outputs[index] = { files: {}, errors: Object.fromEntries(batch.map((filePath) => [filePath, message])) };
@@ -359,8 +460,16 @@ async function extractPython(rootDir: string, paths: string[], signal?: AbortSig
     Object.assign(files, output.files);
     Object.assign(errors, output.errors);
   }
-  const facts = Object.entries(files).map(([filePath, raw]) => {
-    const source = readFileSync(path.join(rootDir, filePath), "utf8");
+  const knownFiles = new Set(Object.keys(files));
+  const facts: GraphFileFacts[] = [];
+  for (const [filePath, raw] of Object.entries(files)) {
+    let source: string;
+    try {
+      source = readFileSync(path.join(rootDir, filePath), "utf8");
+    } catch (error) {
+      errors[filePath] = `cannot read Python graph source: ${error instanceof Error ? error.message : String(error)}`;
+      continue;
+    }
     const rootNode = fileNode(filePath, source.length, "python");
     const nodes: GraphNode[] = [rootNode];
     for (const rawNode of raw.nodes) {
@@ -371,8 +480,17 @@ async function extractPython(rootDir: string, paths: string[], signal?: AbortSig
     const edges = raw.edges.map((rawEdge) => {
       const fromId = rawEdge.from === "<file>" ? rootNode.id : byQualified.get(rawEdge.from) ?? byName.get(rawEdge.from) ?? fingerprint("graph-python", { filePath, name: rawEdge.from });
       const rawTarget = rawEdge.to.replace(/^(?:call|module|registration):/, "");
-      const toId = byQualified.get(rawTarget) ?? byName.get(rawTarget.split(".").at(-1) ?? rawTarget) ?? fingerprint("graph-python-target", { rawTarget });
-      return edge(filePath, fromId, toId, rawEdge.kind, rawEdge.confidence, rawEdge.metadata);
+      const metadata = { ...rawEdge.metadata };
+      let toId = byQualified.get(rawTarget) ?? byName.get(rawTarget.split(".").at(-1) ?? rawTarget) ?? fingerprint("graph-python-target", { rawTarget });
+      if (rawEdge.kind === "imports") {
+        const level = typeof metadata.level === "number" ? metadata.level : 0;
+        const resolved = resolvePythonImport(filePath, rawTarget, level, knownFiles);
+        if (resolved) {
+          toId = nodeId(resolved, "file", resolved);
+          metadata.resolved = resolved;
+        }
+      }
+      return edge(filePath, fromId, toId, rawEdge.kind, rawEdge.confidence, metadata);
     });
     for (const node of nodes.slice(1)) {
       edges.push(edge(filePath, rootNode.id, node.id, "contains", "C3"));
@@ -383,8 +501,8 @@ async function extractPython(rootDir: string, paths: string[], signal?: AbortSig
         }
       }
     }
-    return { filePath, sourceHash: sha256(source), language: path.basename(filePath) === "pyproject.toml" ? "toml" : "python", nodes, edges };
-  });
+    facts.push({ filePath, sourceHash: sha256(source), language: path.basename(filePath) === "pyproject.toml" ? "toml" : "python", nodes, edges });
+  }
   return { facts, errors };
 }
 
@@ -454,30 +572,62 @@ function extractMarkdown(rootDir: string, paths: string[], config: AiSlopConfig)
       return [{ filePath: file.filePath, sourceHash: sha256(file.source), language: "markdown", nodes, edges }];
     }
     rootNode.kind = "specification";
-    const headingPattern = /^(#{1,6})\s+(.+)$/gm;
-    for (const match of file.source.matchAll(headingPattern)) {
-      const name = match[2].trim();
-      const requirement = /\b(?:REQ|OBL|ADR|R)[-_ ]?\d+\b/i.test(name);
+    const headings: Array<{ start: number; end: number; name: string; level: number }> = [];
+    const visibleLines: string[] = [];
+    let offset = 0;
+    let fence: { character: string; length: number } | undefined;
+    for (const line of file.source.split(/(?<=\n)/)) {
+      const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+      if (fence) {
+        visibleLines.push(line.replace(/[^\r\n]/g, " "));
+        if (fenceMatch && fenceMatch[1][0] === fence.character && fenceMatch[1].length >= fence.length) fence = undefined;
+        offset += line.length;
+        continue;
+      }
+      if (fenceMatch) {
+        visibleLines.push(line.replace(/[^\r\n]/g, " "));
+        fence = { character: fenceMatch[1][0], length: fenceMatch[1].length };
+        offset += line.length;
+        continue;
+      }
+      visibleLines.push(line);
+      const headingMatch = line.match(/^(#{1,6})\s+(.+?)(?:\r?\n)?$/);
+      if (headingMatch) {
+        const end = offset + headingMatch[0].replace(/\r?\n$/, "").length;
+        headings.push({ start: offset, end, name: headingMatch[2].trim(), level: headingMatch[1].length });
+      }
+      offset += line.length;
+    }
+    for (const [index, heading] of headings.entries()) {
+      const requirement = /\b(?:REQ|OBL|ADR|R)[-_ ]?\d+\b/i.test(heading.name);
       const kind: GraphNodeKind = requirement ? "requirement" : "specification";
       const node: GraphNode = {
-        id: nodeId(file.filePath, kind, name),
+        id: nodeId(file.filePath, kind, heading.name),
         filePath: file.filePath,
         kind,
-        name,
-        qualifiedName: name,
-        start: match.index ?? 0,
-        end: (match.index ?? 0) + match[0].length,
+        name: heading.name,
+        qualifiedName: heading.name,
+        start: heading.start,
+        end: heading.end,
         exported: false,
-        metadata: { headingLevel: match[1].length },
+        metadata: { headingLevel: heading.level },
       };
       nodes.push(node);
       edges.push(edge(file.filePath, rootNode.id, node.id, "contains", "C3"));
-      const sectionEnd = file.source.indexOf("\n#", node.end);
-      const section = file.source.slice(node.end, sectionEnd < 0 ? undefined : sectionEnd);
+      const sectionEnd = headings[index + 1]?.start ?? file.source.length;
+      const section = visibleLines.join("").slice(heading.end, sectionEnd);
       for (const pathMatch of section.matchAll(/`([^`]+\.[A-Za-z0-9]+)`|\[[^\]]+\]\(([^)]+)\)/g)) {
         const targetPath = pathMatch[1] ?? pathMatch[2];
-        if (!targetPath || /^https?:/.test(targetPath)) continue;
-        const target = safeProjectFile(rootDir, path.resolve(rootDir, path.dirname(file.filePath), targetPath));
+        if (!targetPath || /^(?:https?|mailto|tel):/i.test(targetPath)) continue;
+        const withoutFragment = targetPath.split(/[?#]/, 1)[0];
+        if (!withoutFragment) continue;
+        let decodedPath = withoutFragment;
+        try {
+          decodedPath = decodeURIComponent(withoutFragment);
+        } catch {
+          continue;
+        }
+        const target = safeProjectFile(rootDir, path.resolve(rootDir, path.dirname(file.filePath), decodedPath));
         if (target) edges.push(edge(file.filePath, node.id, nodeId(target.filePath, "file", target.filePath), "governs", "C2", { targetPath: target.filePath }));
       }
     }
@@ -493,29 +643,62 @@ export async function buildGraphFacts(
   reusableProjects: TypeScriptProjectContext[] = [],
 ): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string> }> {
   const root = realpathSync(rootDir);
-  const valid = paths.flatMap((rawPath) => {
-    const absolute = path.resolve(root, rawPath.replace(/^@/, ""));
-    if (!existsSync(absolute)) return [];
-    const real = realpathSync(absolute);
-    const stats = statSync(real);
-    if (!normalizePath(real).startsWith(`${normalizePath(root)}/`) || !stats.isFile() || stats.size > config.limits.maxFileBytes) return [];
-    return [real];
-  });
+  const errors: Record<string, string> = {};
+  if (signal?.aborted) {
+    return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])) };
+  }
+  const valid: string[] = [];
+  for (const rawPath of paths) {
+    const display = normalizePath(rawPath.replace(/^@/, ""));
+    const absolute = path.resolve(root, display);
+    if (!existsSync(absolute)) continue;
+    let real: string;
+    try {
+      real = realpathSync(absolute);
+    } catch {
+      errors[display] = "cannot resolve graph source path";
+      continue;
+    }
+    let stats;
+    try {
+      stats = statSync(real);
+    } catch {
+      errors[display] = "cannot stat graph source path";
+      continue;
+    }
+    if (!normalizePath(real).startsWith(`${normalizePath(root)}/`)) {
+      errors[display] = "path resolves outside the project root";
+      continue;
+    }
+    if (!stats.isFile()) {
+      errors[display] = "path is not a file";
+      continue;
+    }
+    if (stats.size > config.limits.maxFileBytes) {
+      errors[display] = `file exceeds configured limit of ${config.limits.maxFileBytes} bytes`;
+      continue;
+    }
+    valid.push(real);
+  }
+  if (signal?.aborted) {
+    return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])) };
+  }
   const typescriptFiles = valid.filter((filePath) => TYPESCRIPT_EXTENSIONS.has(path.extname(filePath).toLowerCase()));
   const pythonPaths = valid
     .filter((filePath) => path.extname(filePath).toLowerCase() === ".py" || path.basename(filePath) === "pyproject.toml")
     .map((filePath) => normalizePath(path.relative(root, filePath)));
   const markdownPaths = valid.filter((filePath) => path.extname(filePath).toLowerCase() === ".md").map((filePath) => normalizePath(path.relative(root, filePath)));
   const packagePaths = valid.filter((filePath) => path.basename(filePath) === "package.json").map((filePath) => normalizePath(path.relative(root, filePath)));
-  const python = await extractPython(root, pythonPaths, signal);
+  const python = await extractPython(root, pythonPaths, signal, config.limits.maxFileBytes, config.limits.maxOutputBytes);
+  if (signal?.aborted) {
+    return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])) };
+  }
   const packageJson = extractPackageJson(root, packagePaths);
-  return {
-    facts: [
-      ...extractTypescript(root, typescriptFiles, config, reusableProjects),
-      ...python.facts,
-      ...packageJson.facts,
-      ...extractMarkdown(root, markdownPaths, config),
-    ],
-    errors: { ...python.errors, ...packageJson.errors },
-  };
+  const facts = [
+    ...extractTypescript(root, typescriptFiles, config, reusableProjects),
+    ...python.facts,
+    ...packageJson.facts,
+    ...extractMarkdown(root, markdownPaths, config),
+  ];
+  return { facts, errors: { ...errors, ...python.errors, ...packageJson.errors } };
 }

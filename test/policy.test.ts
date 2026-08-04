@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { DEFAULT_CONFIG } from "../src/core/config.ts";
-import { createScanResult, fingerprint } from "../src/core/schema.ts";
+import { createFinding, createScanResult, fingerprint } from "../src/core/schema.ts";
 import {
   addSuppression,
   applyPolicy,
@@ -46,16 +46,17 @@ function wrapper(): FindingDraft {
 }
 
 function result(root: string, finding: FindingDraft, evidenceRecords: EvidenceRecord[] = []) {
+  const created = createFinding(finding, "test-provider", "1");
   return createScanResult({
     engine: "provider-federation",
     engineVersion: "test",
     rootDir: root,
     providerId: "test-provider",
     providerVersion: "1",
-    providerCapabilities: ["syntax"],
-    evidenceRecords,
+    providerCapabilities: ["references"],
+    evidenceRecords: [...created.evidenceRecords, ...evidenceRecords],
     scannedFiles: ["input.ts"],
-    findings: [finding],
+    findings: [created.finding],
     skipped: [],
   });
 }
@@ -112,6 +113,8 @@ test("repository counterevidence vetoes a wrapper proposal", () => {
   const reviewed = applyPolicy(root, result(root, wrapper(), [registration]), DEFAULT_CONFIG, state);
   assert.equal(reviewed.findings[0].maximumAction, "observe");
   assert.match(reviewed.findings[0].counterEvidence.join(" "), /registration/);
+  assert.equal(reviewed.findings[0].counterEvidenceIds.length, 1);
+  assert.equal(reviewed.findings[0].counterEvidenceIds[0], registration.id);
 });
 
 test("reasoned suppressions expire, match their scope, and can be removed", () => {

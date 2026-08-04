@@ -3,7 +3,7 @@ import path from "node:path";
 
 import type { AiSlopConfig, VerificationCommandConfig } from "./config.ts";
 import { isInside, nearestExistingParent } from "./paths.ts";
-import { fingerprint, sha256 } from "./schema.ts";
+import { canonicalFilePath, canonicalJson, fingerprint, sha256 } from "./schema.ts";
 import {
   SCHEMA_VERSION,
   type ClaimAssessment,
@@ -68,7 +68,8 @@ function securePath(rootDir: string, rawPath: string): { absolutePath: string; f
   const realExisting = realpathSync(existing);
   if (!isInside(root, realExisting)) return undefined;
   if (existsSync(absolute) && !isInside(root, realpathSync(absolute))) return undefined;
-  return { absolutePath: absolute, filePath: path.relative(root, absolute).split(path.sep).join("/") };
+  const canonical = existsSync(absolute) ? realpathSync(absolute) : absolute;
+  return { absolutePath: canonical, filePath: canonicalFilePath(root, canonical) };
 }
 
 function fileText(filePath: string): string {
@@ -126,6 +127,29 @@ function findingMap(findings: Finding[]): Map<string, Finding> {
   return new Map(findings.map((finding) => [finding.id, finding]));
 }
 
+function validLedgerEvent(value: unknown): value is LedgerEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
+  if (event.schemaVersion !== SCHEMA_VERSION || typeof event.id !== "string" || typeof event.toolCallId !== "string" ||
+    typeof event.toolName !== "string" || typeof event.timestamp !== "string" || typeof event.succeeded !== "boolean") return false;
+  if (event.kind === "mutation") {
+    const range = event.changedRange;
+    if (!range || typeof range !== "object" || Array.isArray(range)) return false;
+    const changed = range as Record<string, unknown>;
+    return (event.beforeHash === null || typeof event.beforeHash === "string") &&
+      (event.afterHash === null || typeof event.afterHash === "string") && typeof event.filePath === "string" &&
+      Number.isSafeInteger(changed.start) && (changed.start as number) >= 0 &&
+      Number.isSafeInteger(changed.beforeEnd) && (changed.beforeEnd as number) >= (changed.start as number) &&
+      Number.isSafeInteger(changed.afterEnd) && (changed.afterEnd as number) >= (changed.start as number);
+  }
+  if (event.kind !== "verification") return false;
+  const hashes = event.contentHashes;
+  return typeof event.command === "string" && typeof event.verificationKind === "string" &&
+    Array.isArray(event.authoritativeFor) && event.authoritativeFor.every((item) => typeof item === "string") &&
+    hashes !== null && typeof hashes === "object" && !Array.isArray(hashes) &&
+    Object.values(hashes as Record<string, unknown>).every((item) => typeof item === "string");
+}
+
 export class AssuranceLedger {
   readonly rootDir: string;
   readonly config: AiSlopConfig;
@@ -136,9 +160,20 @@ export class AssuranceLedger {
     this.rootDir = rootDir;
     this.config = config;
   }
-
   reconstruct(events: LedgerEvent[]): void {
-    this.events = events.filter((event) => event.schemaVersion === SCHEMA_VERSION);
+    this.events = events
+      .filter(validLedgerEvent)
+      .map((event) =>
+        event.kind === "mutation"
+          ? { ...event, filePath: canonicalFilePath(this.rootDir, event.filePath) }
+          : {
+              ...event,
+              authoritativeFor: event.authoritativeFor.map((filePath) => canonicalFilePath(this.rootDir, filePath)),
+              contentHashes: Object.fromEntries(
+                Object.entries(event.contentHashes).map(([filePath, hash]) => [canonicalFilePath(this.rootDir, filePath), hash]),
+              ),
+            },
+      );
     this.pending.clear();
   }
 
@@ -192,7 +227,14 @@ export class AssuranceLedger {
       const afterHash = fileHash(pending.absolutePath);
       ledgerEvent = {
         schemaVersion: SCHEMA_VERSION,
-        id: fingerprint("ledger", { afterHash, beforeHash: pending.beforeHash, toolCallId: pending.toolCallId }),
+        id: fingerprint("ledger", {
+          afterHash,
+          beforeHash: pending.beforeHash,
+          filePath: pending.filePath,
+          succeeded,
+          toolCallId: pending.toolCallId,
+          toolName: pending.toolName,
+        }),
         kind: "mutation",
         toolCallId: pending.toolCallId,
         toolName: pending.toolName,
@@ -216,7 +258,15 @@ export class AssuranceLedger {
       );
       ledgerEvent = {
         schemaVersion: SCHEMA_VERSION,
-        id: fingerprint("ledger", { command: pending.command, contentHashes, succeeded, toolCallId: pending.toolCallId }),
+        id: fingerprint("ledger", {
+          authoritativeFor,
+          command: pending.command,
+          contentHashes,
+          succeeded,
+          toolCallId: pending.toolCallId,
+          toolName: pending.toolName,
+          verificationKind: pending.config?.kind ?? "unclassified",
+        }),
         kind: "verification",
         toolCallId: pending.toolCallId,
         toolName: pending.toolName,
@@ -234,7 +284,8 @@ export class AssuranceLedger {
 
   verificationStatus(paths = this.touchedPaths()): VerificationStatus[] {
     const verifications = this.events.filter((event): event is VerificationLedgerEvent => event.kind === "verification");
-    return paths.map((filePath) => {
+    return paths.map((rawPath) => {
+      const filePath = canonicalFilePath(this.rootDir, rawPath);
       const resolved = securePath(this.rootDir, filePath);
       const contentHash = resolved ? fileHash(resolved.absolutePath) : null;
       const relevant = verifications.filter(
@@ -319,12 +370,27 @@ export function diffScans(current: ScanResult, baseline?: ScanResult): ScanDelta
   const changed: Array<{ before: Finding; after: Finding }> = [];
   for (const finding of current.findings) {
     const previous = before.get(finding.id);
-    if (!previous) added.push(finding);
-    else if (
+    if (!previous) {
+      added.push(finding);
+      continue;
+    }
+    const sourceChanged =
+      previous.sourceHash !== finding.sourceHash &&
+      previous.line === finding.line &&
+      previous.column === finding.column &&
+      previous.start === finding.start &&
+      previous.end === finding.end;
+    const equivalent =
       previous.confidence === finding.confidence &&
       previous.maximumAction === finding.maximumAction &&
-      previous.message === finding.message
-    ) unchanged.push(finding);
+      previous.message === finding.message &&
+      previous.classification === finding.classification &&
+      previous.risk === finding.risk &&
+      canonicalJson(previous.evidence) === canonicalJson(finding.evidence) &&
+      canonicalJson(previous.counterEvidence) === canonicalJson(finding.counterEvidence) &&
+      canonicalJson(previous.unknown) === canonicalJson(finding.unknown) &&
+      !sourceChanged;
+    if (equivalent) unchanged.push(finding);
     else changed.push({ before: previous, after: finding });
   }
   const resolved = baseline.findings.filter((finding) => !after.has(finding.id));

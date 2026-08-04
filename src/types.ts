@@ -316,6 +316,7 @@ export interface Proposal {
   deletesFiles: boolean;
   criticalPaths: string[];
   experiments: ExperimentSpec[];
+  appliedFileHashes?: Record<string, string | null>;
   status: "candidate" | "verified" | "rejected" | "applied" | "rolled-back";
 }
 
@@ -339,7 +340,7 @@ export interface LabRun {
   checks: LabCheck[];
   publicSurfaceChanged: boolean;
   experimentResults: ExperimentResult[];
-  status: "verified" | "rejected" | "aborted";
+  status: "verified" | "rejected" | "cancelled" | "aborted";
   diagnostic?: string;
 }
 

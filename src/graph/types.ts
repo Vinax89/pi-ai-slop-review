@@ -28,6 +28,7 @@ export interface GraphEdge {
 export interface GraphFileFacts {
   filePath: string;
   sourceHash: string;
+  cacheHash?: string;
   source?: string;
   language: string;
   nodes: GraphNode[];

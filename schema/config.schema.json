@@ -49,6 +49,7 @@
     },
     "graph": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
         "testPatterns": { "type": "array", "items": { "type": "string" } },
@@ -57,6 +58,7 @@
           "type": "array",
           "items": {
             "type": "object",
+            "additionalProperties": false,
             "required": ["name", "patterns"],
             "properties": { "name": { "type": "string" }, "patterns": { "type": "array", "items": { "type": "string" } } }
           }
@@ -67,11 +69,13 @@
     "experiments": { "type": "object", "additionalProperties": { "type": "boolean" } },
     "verification": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "commands": {
           "type": "array",
           "items": {
             "type": "object",
+            "additionalProperties": false,
             "required": ["pattern", "kind", "authoritativeFor"],
             "properties": {
               "pattern": { "type": "string" },
@@ -87,6 +91,7 @@
   "$defs": {
     "report": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["kind", "path"],
       "properties": { "kind": { "type": "string" }, "path": { "type": "string" } }
     }

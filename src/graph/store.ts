@@ -54,7 +54,7 @@ export class GraphStore {
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     this.database = new DatabaseSync(this.databasePath);
     chmodSync(this.databasePath, 0o600);
-    this.database.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
+    this.database.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;");
     this.migrate();
   }
 
@@ -87,8 +87,9 @@ export class GraphStore {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       for (const facts of files) {
-        const existing = current.get(facts.filePath) as any;
-        if (existing?.source_hash === facts.sourceHash) continue;
+        const existing = current.get(facts.filePath) as { source_hash?: string } | undefined;
+        const cacheHash = facts.cacheHash ?? facts.sourceHash;
+        if (existing?.source_hash === cacheHash) continue;
         if (existing) {
           const nextNodeIds = new Set(facts.nodes.map((node) => node.id));
           for (const row of nodeIds.all(facts.filePath) as Array<{ id: string }>) {
@@ -97,7 +98,7 @@ export class GraphStore {
         }
         deleteEdges.run(facts.filePath);
         deleteNodes.run(facts.filePath);
-        upsertFile.run(facts.filePath, facts.sourceHash, facts.language, updatedAt);
+        upsertFile.run(facts.filePath, cacheHash, facts.language, updatedAt);
         for (const node of facts.nodes) {
           insertNode.run(
             node.id,

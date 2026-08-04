@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.7.0"
   },
   "keywords": [
     "pi-package",
@@ -42,11 +42,11 @@
     "npm-shrinkwrap.json"
   ],
   "scripts": {
-    "benchmark": "node --expose-gc --experimental-strip-types src/evaluation/benchmark.ts",
+    "benchmark": "node --expose-gc --experimental-strip-types --experimental-transform-types src/evaluation/benchmark.ts",
     "build": "npm run typecheck",
-    "evaluate": "node --experimental-strip-types src/evaluation/cli.ts",
+    "evaluate": "node --experimental-strip-types --experimental-transform-types src/evaluation/cli.ts",
     "lifecycle": "node scripts/lifecycle.mjs",
-    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test": "node --experimental-strip-types --experimental-transform-types --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "validate": "npm run build && npm test && npm run evaluate && npm audit --omit=dev"
   },
@@ -58,15 +58,11 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
-      "optional": true
-    },
-    "@earendil-works/pi-coding-agent": {
       "optional": true
     },
     "@earendil-works/pi-tui": {
