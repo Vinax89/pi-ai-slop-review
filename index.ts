@@ -1,17 +1,17 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-
-import { Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import type { Text as PiText } from "@earendil-works/pi-tui";
+import type { Type as TypeboxType } from "typebox";
 
 import { assessScanCompleteness } from "./src/core/completeness.ts";
-import { loadConfig, type LoadedConfig } from "./src/core/config.ts";
+import { loadConfig, redactConfig, type LoadedConfig } from "./src/core/config.ts";
 import { discoverRepositoryFiles } from "./src/core/discovery.ts";
 import { splitCommand as splitCommandPaths } from "./src/core/execution.ts";
 import { rankFindings, weightedSeverity } from "./src/core/severity.ts";
 import { AssuranceLedger, diffScans, type ScanDelta, type VerificationStatus } from "./src/core/ledger.ts";
 import { StateStore } from "./src/core/store.ts";
 import { diagnose, formatDiagnostics } from "./src/diagnostics.ts";
+import { fingerprint } from "./src/core/schema.ts";
 import { runIndependentCritics } from "./src/experiments/critics.ts";
 import { runExpressionExperiment } from "./src/experiments/expression.ts";
 import { runSmtEquivalence, runTranslationValidation } from "./src/experiments/formal.ts";
@@ -30,6 +30,30 @@ const LEDGER_ENTRY_TYPE = "ai-slop-ledger-v1";
 const LEGACY_TOUCHED_ENTRY_TYPE = "ai-slop-touched";
 const REVIEW_BASELINE_NAME = "last-review";
 const AUDIT_BASELINE_NAME = "last-audit";
+type RuntimeText = typeof PiText;
+type RuntimeType = typeof TypeboxType;
+
+function optionalPeerError(name: string, error: unknown): Error {
+  const detail = error instanceof Error ? `: ${error.message}` : "";
+  return new Error(`AI-slop review requires optional peer '${name}' to initialize Pi integration${detail}`, { cause: error });
+}
+
+async function loadRuntimePeers(): Promise<{ Text: RuntimeText; Type: RuntimeType }> {
+  let tui: { Text: RuntimeText };
+  try {
+    // Pi host peers are optional; defer resolution until the integration is initialized.
+    tui = await import("@earendil-works/pi-tui");
+  } catch (error) {
+    throw optionalPeerError("@earendil-works/pi-tui", error);
+  }
+  let typebox: { Type: RuntimeType };
+  try {
+    typebox = await import("typebox");
+  } catch (error) {
+    throw optionalPeerError("typebox", error);
+  }
+  return { Text: tui.Text, Type: typebox.Type };
+}
 
 interface ReviewOutcome {
   result: ScanResult;
@@ -54,8 +78,9 @@ function reviewText(outcome: ReviewOutcome, maxFindings: number): string {
   return sections.join("\n\n");
 }
 
-export default function (pi: any): void {
+export default async function (pi: any): Promise<void> {
   if (DISABLED) return;
+  const { Text, Type } = await loadRuntimePeers();
   let ledger: AssuranceLedger | undefined;
   let loadedConfig: LoadedConfig | undefined;
   let store: StateStore | undefined;
@@ -80,6 +105,22 @@ export default function (pi: any): void {
     }
     ledger.reconstruct(events);
     store = new StateStore(ctx.cwd);
+    if (!lastOutcome) {
+      try {
+        const persisted = store.load().baselines[REVIEW_BASELINE_NAME] ?? store.load().baselines[AUDIT_BASELINE_NAME];
+        if (persisted) {
+          lastOutcome = {
+            result: persisted,
+            delta: diffScans(persisted),
+            verification: ledger.verificationStatus(persisted.scope.paths),
+            claims: [],
+            warnings: ["latest review restored from persistent state"],
+          };
+        }
+      } catch {
+        // A corrupt baseline is reported by state-backed commands when they access it.
+      }
+    }
   };
 
   const ensureInitialized = (ctx: any): AssuranceLedger => {
@@ -121,6 +162,7 @@ export default function (pi: any): void {
     signal: AbortSignal | undefined,
     claimsText = "",
     mode: ScanScope["mode"] = requestedPaths?.length ? "explicit" : "session",
+    discoveryTruncated = false,
   ): Promise<ReviewOutcome> => {
     if (!ledger || !loadedConfig || !store) throw new Error("AI-slop review is not initialized");
     const explicit = Boolean(requestedPaths?.length);
@@ -131,6 +173,22 @@ export default function (pi: any): void {
       configHash: loadedConfig.hash,
       trustedProject,
     });
+    if (signal?.aborted || result.completeness?.status === "abstained") throw new Error("AI-slop review cancelled");
+    if (discoveryTruncated) {
+      result.skipped.push({
+        filePath: "<repository-discovery>",
+        reason: `repository discovery stopped at ${loadedConfig!.config.limits.maxFiles} files`,
+        providerId: "repository-discovery",
+      });
+      result.completeness = assessScanCompleteness(result);
+      result.scanId = fingerprint("scan", {
+        contentHash: result.scope.contentHash,
+        findings: result.findings.map((finding) => finding.id),
+        providers: result.providers,
+        skipped: result.skipped,
+        completeness: result.completeness,
+      });
+    }
     let baseline: ScanResult | undefined;
     const warnings = [...loadedConfig.warnings];
     try {
@@ -219,8 +277,8 @@ export default function (pi: any): void {
       ctx.ui.setStatus("ai-slop", `auditing ${discovery.paths.length} file(s)…`);
       ctx.ui.notify(`Auditing ${discovery.paths.length} file(s)${discovery.truncated ? " (configured limit reached)" : ""}...`, "info");
       try {
-        const outcome = await review(ctx.cwd, discovery.paths, ctx.signal, "", "repository");
-        if (discovery.truncated) outcome.warnings.push(`repository discovery stopped at ${loadedConfig!.config.limits.maxFiles} files`);
+        const outcome = await review(ctx.cwd, discovery.paths, ctx.signal, "", "repository", discovery.truncated);
+        if (discovery.truncated) outcome.warnings.push(`repository discovery stopped at ${loadedConfig!.config.limits.maxFiles} files; result completeness is partial`);
         lastOutcome = outcome;
         pi.appendEntry(ENTRY_TYPE, outcome);
         ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} audit findings · ${outcome.delta.added.length} new`);
@@ -399,7 +457,7 @@ export default function (pi: any): void {
     description: "Show effective non-secret AI-slop configuration and trust state",
     handler: async (_args: string, ctx: any) => {
       ensureInitialized(ctx);
-      ctx.ui.notify(JSON.stringify({ hash: loadedConfig!.hash, sources: loadedConfig!.sources, trustedProject, config: loadedConfig!.config, warnings: loadedConfig!.warnings }, null, 2), "info");
+      ctx.ui.notify(JSON.stringify({ hash: loadedConfig!.hash, sources: loadedConfig!.sources, trustedProject, config: redactConfig(loadedConfig!.config), warnings: loadedConfig!.warnings }, null, 2), "info");
     },
   });
 
@@ -426,11 +484,15 @@ export default function (pi: any): void {
           if (!risk) return;
           const obligations = await ctx.ui.input("Proof obligations separated by semicolons", "typecheck; targeted tests; public surface unchanged");
           if (!obligations?.trim()) return;
+          const findingIdsText = await ctx.ui.input("Latest-review finding IDs separated by commas", "finding:...");
+          if (!findingIdsText?.trim()) return;
+          const findingIds = findingIdsText.split(",").map((item: string) => item.trim()).filter(Boolean);
           const commands = loadedConfig!.config.execution.commands.map(splitCommandPaths);
-          const confirmed = await ctx.ui.confirm("Create proposal?", `Run in network-isolated worktrees:\n${loadedConfig!.config.execution.commands.join("\n")}`);
+          const confirmed = await ctx.ui.confirm("Create proposal?", loadedConfig!.config.execution.commands.map((command) => redactConfig(command)).join("\n"));
           if (!confirmed) return;
           const proposal = await createProposal(ctx.cwd, {
             patch,
+            findingIds,
             risk,
             proofObligations: obligations.split(";").map((item: string) => item.trim()).filter(Boolean),
             commands,

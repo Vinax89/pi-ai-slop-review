@@ -3,250 +3,446 @@
     {
       "id": "wrapper-positive-ts-train",
       "repository": "ts-wrapper-train",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "propose",
       "actualAction": "propose",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "wrapper-public-api-ts-train",
       "repository": "ts-wrapper-train",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "actualConfidence": "C1",
+      "vetoMatched": true,
       "unsafeAction": false
     },
     {
       "id": "wrapper-transform-ts-train",
       "repository": "ts-transform-train",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "catch-empty-ts-train",
       "repository": "ts-errors-train",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "catch-rethrow-ts-train",
       "repository": "ts-errors-train",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "catch-fallback-ts-train",
       "repository": "ts-fallback-train",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "catch-typed-error-ts-train",
       "repository": "ts-fallback-train",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "unresolved-builtin-ts-train",
       "repository": "ts-imports-train",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "unresolved-import-python-train",
       "repository": "py-imports-train",
+      "language": "python",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "optional-import-python-train",
       "repository": "py-imports-train",
+      "language": "python",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "wrapper-python-train",
       "repository": "py-wrapper-train",
+      "language": "python",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "expectedConfidence": "C1",
+      "actualConfidence": "C1",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "catch-fallback-python-train",
       "repository": "py-errors-train",
+      "language": "python",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "predicate-outcome-python-train",
       "repository": "py-errors-train",
+      "language": "python",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "wrapper-positive-ts-validation",
       "repository": "ts-wrapper-validation",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "propose",
       "actualAction": "propose",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "wrapper-contract-ts-validation",
       "repository": "ts-contract-validation",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "actualConfidence": "C1",
+      "vetoMatched": true,
       "unsafeAction": false
     },
     {
       "id": "wrapper-overload-ts-validation",
       "repository": "ts-contract-validation",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "actualConfidence": "C1",
+      "vetoMatched": true,
       "unsafeAction": false
     },
     {
       "id": "predicate-outcome-ts-validation",
       "repository": "ts-predicate-validation",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "suppressed-log-python-validation",
       "repository": "py-errors-validation",
+      "language": "python",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "typed-error-python-validation",
       "repository": "py-errors-validation",
+      "language": "python",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "platform-import-python-validation",
       "repository": "py-platform-validation",
+      "language": "python",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "wrapper-positive-ts-holdout",
       "repository": "ts-wrapper-holdout",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "propose",
       "actualAction": "propose",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "wrapper-recursive-ts-holdout",
       "repository": "ts-recursive-holdout",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "catch-log-ts-holdout",
       "repository": "ts-errors-holdout",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "fallback-array-ts-holdout",
       "repository": "ts-fallback-holdout",
+      "language": "typescript",
       "passed": true,
       "expectedAction": "observe",
       "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "predicate-has-python-holdout",
       "repository": "py-predicate-holdout",
+      "language": "python",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "decorated-wrapper-python-holdout",
       "repository": "py-wrapper-holdout",
+      "language": "python",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "annotated-wrapper-python-holdout",
       "repository": "py-wrapper-holdout",
+      "language": "python",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
       "unsafeAction": false
     },
     {
       "id": "class-method-wrapper-python-holdout",
       "repository": "py-class-holdout",
+      "language": "python",
       "passed": true,
       "expectedAction": "ignore",
       "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "wrapper-javascript-train",
+      "repository": "js-wrapper-train",
+      "language": "javascript",
+      "passed": true,
+      "expectedAction": "propose",
+      "actualAction": "propose",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "catch-log-javascript-validation",
+      "repository": "js-errors-validation",
+      "language": "javascript",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "fallback-javascript-holdout",
+      "repository": "js-fallback-holdout",
+      "language": "javascript",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
       "unsafeAction": false
     }
   ],
-  "total": 28,
-  "passed": 28,
+  "total": 31,
+  "passed": 31,
   "hardNegatives": 17,
   "unsafeHardNegativeActions": 0,
   "actionablePrecision": 1,
-  "abstentionRate": 0.8928571428571429,
+  "abstentionRate": 0.8709677419354839,
   "repositoryLeakage": [],
   "bySplit": {
     "train": {
-      "total": 13,
-      "passed": 13,
+      "total": 14,
+      "passed": 14,
       "unsafeHardNegativeActions": 0
     },
     "validation": {
-      "total": 7,
-      "passed": 7,
-      "unsafeHardNegativeActions": 0
-    },
-    "holdout": {
       "total": 8,
       "passed": 8,
       "unsafeHardNegativeActions": 0
+    },
+    "holdout": {
+      "total": 9,
+      "passed": 9,
+      "unsafeHardNegativeActions": 0
     }
+  },
+  "byLanguage": {
+    "typescript": {
+      "total": 16,
+      "passed": 16,
+      "unsafeHardNegativeActions": 0
+    },
+    "javascript": {
+      "total": 3,
+      "passed": 3,
+      "unsafeHardNegativeActions": 0
+    },
+    "python": {
+      "total": 12,
+      "passed": 12,
+      "unsafeHardNegativeActions": 0
+    }
+  },
+  "runtime": {
+    "node": "v22.23.1",
+    "nodeVersions": {
+      "node": "22.23.1",
+      "acorn": "8.16.0",
+      "ada": "2.9.2",
+      "amaro": "1.1.8",
+      "ares": "1.34.6",
+      "brotli": "1.1.0",
+      "cjs_module_lexer": "2.2.0",
+      "cldr": "48.0",
+      "icu": "78.2",
+      "llhttp": "9.4.2",
+      "modules": "127",
+      "napi": "10",
+      "nbytes": "0.1.3",
+      "ncrypto": "0.0.1",
+      "nghttp2": "1.69.0",
+      "openssl": "3.5.7",
+      "simdjson": "4.5.0",
+      "simdutf": "6.4.2",
+      "sqlite": "3.51.3",
+      "tz": "2026a",
+      "undici": "6.27.0",
+      "unicode": "17.0",
+      "uv": "1.51.0",
+      "uvwasi": "0.0.23",
+      "v8": "12.4.254.21-node.56",
+      "zlib": "1.3.1-e00f703",
+      "zstd": "1.5.7"
+    },
+    "python": {
+      "executable": "python3",
+      "version": "Python 3.12.3"
+    },
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "hashes": {
+    "code": "f53926117f8a7122e313636987e7f899e855b0812f9f3cce08d5c8175f7c5511",
+    "corpus": "4d9e4c41192471d211936a5d5110d55e958c44aea894e1d6942407373a33290c",
+    "rules": "d2f9bcb4bbb9c18df671539c7f1aa2ba3415036bb7e8da71ad825c596d69e578",
+    "library": "77d08e9f1124a13e7d2b352351efd173072e3a6103895ff963a6a7d5ce525341",
+    "schema": "ce8218855a0a835bc9a6eebb02089a9b1824c01e5158d3b83eec780d133cbece",
+    "package": "da8ed01876928063f7dee82b533d5c168379ae8ab0066b4518ce87eb79170d9b",
+    "config": "cc333bdfa67ba261ca5e713a932b32f65f3b650023591b51b0609cfe4c6f1c3b",
+    "runtime": "e350ee3832c69b952d8fa49d13c9e133be158189a4d91c03592c2aafa0b85a0c"
   }
 }

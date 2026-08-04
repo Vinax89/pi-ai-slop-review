@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { createScanResult } from "../core/schema.ts";
 import type { FindingConfidence, FindingDraft, FindingRisk, ScanResult, SkippedFile } from "../types.ts";
-import { safeProjectFile, sourceRange } from "./files.ts";
+import { safeProjectFile, sourceRange, validReportCoordinate } from "./files.ts";
 
 interface SarifLocation {
   physicalLocation?: {
@@ -94,6 +94,15 @@ export function importSarif(rootDir: string, reportPaths: string[]): ScanResult 
           continue;
         }
         const region = location?.physicalLocation?.region;
+        const coordinates = [region?.startLine, region?.startColumn, region?.endLine, region?.endColumn];
+        if (coordinates.some((coordinate) => coordinate !== undefined && !validReportCoordinate(coordinate))) {
+          skipped.push({
+            filePath: rawArtifact ?? report.filePath,
+            reason: `SARIF ${toolName} result has invalid non-finite or non-integral coordinates`,
+            providerId: "sarif",
+          });
+          continue;
+        }
         const range = sourceRange(
           sourceFile.filePath,
           sourceFile.source,

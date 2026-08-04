@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import type { AiSlopConfig } from "../core/config.ts";
@@ -15,8 +15,12 @@ function matches(filePath: string, patterns: string[]): boolean {
 }
 
 function pathMatches(filePath: string, pattern: string): boolean {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*");
-  return new RegExp(`^${escaped}$`).test(filePath);
+  try {
+    return path.matchesGlob(filePath, pattern);
+  } catch {
+    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*");
+    return new RegExp(`^${escaped}$`).test(filePath);
+  }
 }
 
 function layerFor(filePath: string, config: AiSlopConfig): string | undefined {
@@ -126,7 +130,16 @@ export async function collectGraphEvidence(
     const invalidFiles = Object.entries(built.errors)
       .filter(([, reason]) => !/^Python graph scan (?:unavailable|aborted):?/.test(reason))
       .map(([filePath]) => filePath);
-    const missingFiles = store.files().filter((filePath) => !existsSync(path.resolve(rootDir, filePath)));
+    const root = realpathSync(rootDir);
+    const missingFiles = store.files().filter((filePath) => {
+      const absolute = path.resolve(root, filePath);
+      if (!existsSync(absolute)) return true;
+      try {
+        return !realpathSync(absolute).startsWith(`${root}${path.sep}`);
+      } catch {
+        return true;
+      }
+    });
     store.removeFiles([...new Set([...invalidFiles, ...missingFiles])]);
     store.updateFiles(built.facts);
     const reviewedFiles = built.facts.map((facts) => facts.filePath);
@@ -145,6 +158,7 @@ export async function collectGraphEvidence(
 
     const reportedCloneGroups = new Set<string>();
     for (const node of reviewedNodes) {
+      if (findings.length >= config.limits.maxFindings) break;
       if (node.bodyHash && ["function", "class"].includes(node.kind)) {
         const cloneGroup = `${node.kind}:${node.bodyHash}`;
         if (duplicateBodyGroups.has(cloneGroup) && !reportedCloneGroups.has(cloneGroup)) {
@@ -205,6 +219,7 @@ export async function collectGraphEvidence(
     }
 
     for (const graphEdge of allEdges.filter((item) => item.kind === "imports" && reviewedFileSet.has(item.filePath))) {
+      if (findings.length >= config.limits.maxFindings) break;
       const target = reviewedNodeById.get(graphEdge.toId) ?? store.node(graphEdge.toId);
       if (!target) continue;
       const fromLayer = layerFor(graphEdge.filePath, config);

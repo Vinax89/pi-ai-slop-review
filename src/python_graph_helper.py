@@ -4,10 +4,13 @@ import ast
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import tomllib
 from typing import Any
+
+MAX_FILE_BYTES = int(os.environ.get("PI_AI_SLOP_MAX_FILE_BYTES", str(1024 * 1024)))
 
 sys.dont_write_bytecode = True
 _COMMON_SPEC = importlib.util.spec_from_file_location("_pi_ai_slop_python_common", Path(__file__).with_name("python_common.py"))
@@ -74,7 +77,7 @@ def scan(file_path: Path, source: str) -> dict[str, Any]:
             top_level = isinstance(parents.get(node), ast.Module)
             exported = top_level and (node.name in declared_all if declared_all is not None else not node.name.startswith("_"))
             decorators = [call_name(item.func if isinstance(item, ast.Call) else item) for item in getattr(node, "decorator_list", [])]
-            kind = "class" if isinstance(node, ast.ClassDef) else "test" if node.name.startswith("test") or "/test" in file_path.as_posix() else "function"
+            kind = "class" if isinstance(node, ast.ClassDef) else "test" if node.name.startswith("test") else "function"
             start = offset(lines, getattr(node, "lineno", 1), getattr(node, "col_offset", 0))
             end = offset(lines, getattr(node, "end_lineno", getattr(node, "lineno", 1)), getattr(node, "end_col_offset", 0))
             body_hash = hashlib.sha256(ast.dump(ast.Module(body=getattr(node, "body", []), type_ignores=[]), include_attributes=False).encode()).hexdigest()
@@ -103,10 +106,14 @@ def scan(file_path: Path, source: str) -> dict[str, Any]:
                     })
 
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            modules = [alias.name for alias in node.names] if isinstance(node, ast.Import) else ([node.module] if node.module else [])
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif node.module:
+                modules = [node.module]
+            else:
+                modules = [alias.name for alias in node.names]
             for module in modules:
                 edges.append({"from": "<file>", "to": f"module:{module}", "kind": "imports", "confidence": "C2", "metadata": {"module": module, "level": getattr(node, "level", 0)}})
-
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -115,6 +122,18 @@ def scan(file_path: Path, source: str) -> dict[str, Any]:
         target = call_name(node.func)
         edges.append({"from": source_name, "to": f"call:{target}", "kind": "calls", "confidence": "C1", "metadata": {"target": target}})
         if target.split(".")[-1].lower() in {"register", "route", "add_route", "add_api_route", "command", "task"}:
+            if not any(item["kind"] == "registration" and item["name"] == target for item in nodes):
+                start = offset(lines, getattr(node, "lineno", 1), getattr(node, "col_offset", 0))
+                end = offset(lines, getattr(node, "end_lineno", getattr(node, "lineno", 1)), getattr(node, "end_col_offset", 0))
+                nodes.append({
+                    "kind": "registration",
+                    "name": target,
+                    "qualifiedName": target,
+                    "start": start,
+                    "end": end,
+                    "exported": False,
+                    "metadata": {"framework": "call-registration", "target": target},
+                })
             edges.append({"from": source_name, "to": f"registration:{target}", "kind": "registers", "confidence": "C2", "metadata": {"target": target}})
 
     return {"nodes": nodes, "edges": edges}
@@ -152,20 +171,22 @@ def main() -> None:
     root = Path(sys.argv[1]).resolve(strict=True)
     results: dict[str, Any] = {}
     errors: dict[str, str] = {}
-    for raw in sys.argv[2:]:
-        candidate = (root / raw.lstrip("@")).resolve()
-        display = candidate.relative_to(root).as_posix() if is_inside(root, candidate) else raw
+    for raw_path in sys.argv[2:]:
+        candidate = (root / raw_path.lstrip("@")).resolve()
+        display = candidate.relative_to(root).as_posix() if is_inside(root, candidate) else raw_path
         supported = candidate.suffix.lower() == ".py" or candidate.name == "pyproject.toml"
         if not is_inside(root, candidate) or not candidate.is_file() or not supported:
             errors[display] = "missing, unsupported, or outside project root"
             continue
+        if candidate.stat().st_size > MAX_FILE_BYTES:
+            errors[display] = f"file exceeds {MAX_FILE_BYTES} bytes"
+            continue
         try:
             source = candidate.read_text(encoding="utf-8")
             results[display] = scan_pyproject(source) if candidate.name == "pyproject.toml" else scan(candidate, source)
-        except (OSError, UnicodeError, SyntaxError) as error:
+        except (OSError, UnicodeError, SyntaxError, tomllib.TOMLDecodeError) as error:
             errors[display] = str(error)
     print(json.dumps({"files": results, "errors": errors}, separators=(",", ":")))
-
 
 if __name__ == "__main__":
     main()

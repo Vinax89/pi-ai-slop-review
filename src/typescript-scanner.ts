@@ -10,8 +10,8 @@ import { canonicalSymbol } from "./core/typescript.ts";
 import type { FindingConfidence, FindingDraft, ScanResult, SkippedFile } from "./types.ts";
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
-const MAX_FILE_BYTES = 1024 * 1024;
-const BUILTINS = new Set(builtinModules.flatMap((name) => [name, name.replace(/^node:/, ""), `node:${name.replace(/^node:/, "")}`]));
+const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
+const BUILTINS = new Set(builtinModules.flatMap((name) => [name, name.replace(/^node:/, ""), `node:${name.replace(/^node:/, "")}`,]));
 const LOG_METHODS = new Set(["debug", "error", "exception", "info", "log", "trace", "warn", "warning"]);
 
 export interface TypeScriptProjectContext {
@@ -23,6 +23,11 @@ export interface TypeScriptProjectContext {
   configHasErrors: boolean;
 }
 
+export interface TypeScriptScanOptions {
+  signal?: AbortSignal;
+  maxFileBytes?: number;
+  maxFindings?: number;
+}
 type Project = TypeScriptProjectContext;
 
 interface WrapperCandidate {
@@ -482,7 +487,7 @@ function wrapperFindings(project: Project, root: string, wrappers: WrapperCandid
   });
 }
 
-function resolveFiles(rootDir: string, inputs: string[]): { files: string[]; skipped: SkippedFile[] } {
+function resolveFiles(rootDir: string, inputs: string[], maxFileBytes = DEFAULT_MAX_FILE_BYTES): { files: string[]; skipped: SkippedFile[] } {
   const root = realpathSync(rootDir);
   const files: string[] = [];
   const skipped: SkippedFile[] = [];
@@ -507,8 +512,8 @@ function resolveFiles(rootDir: string, inputs: string[]): { files: string[]; ski
       skipped.push({ filePath: display, reason: "unsupported file extension" });
       continue;
     }
-    if (stats.size > MAX_FILE_BYTES) {
-      skipped.push({ filePath: display, reason: `file exceeds ${MAX_FILE_BYTES} bytes` });
+    if (stats.size > maxFileBytes) {
+      skipped.push({ filePath: display, reason: `file exceeds ${maxFileBytes} bytes` });
       continue;
     }
     files.push(real);
@@ -519,34 +524,40 @@ function resolveFiles(rootDir: string, inputs: string[]): { files: string[]; ski
 export function scanTypeScriptFilesWithProjects(
   rootDir: string,
   inputPaths: string[],
+  options: TypeScriptScanOptions = {},
 ): { result: ScanResult; projects: TypeScriptProjectContext[] } {
   const root = realpathSync(rootDir);
-  const resolved = resolveFiles(root, inputPaths);
+  const resolved = resolveFiles(root, inputPaths, options.maxFileBytes);
   const findings: FindingDraft[] = [];
   const scannedFiles: string[] = [];
   const skipped = [...resolved.skipped];
   const groups = new Map<string, string[]>();
   const configPaths = new Map<string, string | undefined>();
   const projects: TypeScriptProjectContext[] = [];
-
-  for (const file of resolved.files) {
-    const directory = path.dirname(file);
-    if (!configPaths.has(directory)) configPaths.set(directory, findProjectConfig(root, file));
-    const configPath = configPaths.get(directory);
-    const key = configPath ?? "<none>";
-    const group = groups.get(key);
-    if (group) group.push(file);
-    else groups.set(key, [file]);
+  const maxFindings = options.maxFindings ?? Number.POSITIVE_INFINITY;
+  if (options.signal?.aborted) {
+    skipped.push(...resolved.files.map((file) => ({ filePath: normalizePath(path.relative(root, file)), reason: "TypeScript scan aborted" })));
+  } else {
+    for (const file of resolved.files) {
+      const directory = path.dirname(file);
+      if (!configPaths.has(directory)) configPaths.set(directory, findProjectConfig(root, file));
+      const configPath = configPaths.get(directory);
+      const key = configPath ?? "<none>";
+      const group = groups.get(key);
+      if (group) group.push(file);
+      else groups.set(key, [file]);
+    }
   }
 
   for (const [key, files] of groups) {
-    // ponytail: only pay for a full project when wrapper reference evidence needs it.
+    if (options.signal?.aborted) break;
     const project = createProject(files, key === "<none>" ? undefined : key);
     projects.push(project);
     const hashes = new Map<string, string>();
     const validFiles = new Set<string>();
 
     for (const file of files) {
+      if (options.signal?.aborted) break;
       const sourceFile = project.program.getSourceFile(file);
       const display = normalizePath(path.relative(root, file));
       if (!sourceFile) {
@@ -567,14 +578,22 @@ export function scanTypeScriptFilesWithProjects(
       hashes.set(path.resolve(file), sourceHash);
       validFiles.add(path.resolve(file));
       scannedFiles.push(display);
-      findings.push(...scanImports(project, sourceFile, sourceHash, root));
-      findings.push(...scanCatchClauses(sourceFile, sourceHash, root));
+      if (findings.length < maxFindings) {
+        const remaining = maxFindings - findings.length;
+        findings.push(...scanImports(project, sourceFile, sourceHash, root).slice(0, remaining));
+      }
+      if (findings.length < maxFindings) {
+        const remaining = maxFindings - findings.length;
+        findings.push(...scanCatchClauses(sourceFile, sourceHash, root).slice(0, remaining));
+      }
     }
 
-    const wrappers = collectWrappers(project, validFiles);
-    findings.push(...wrapperFindings(project, root, wrappers, hashes));
+    if (!options.signal?.aborted && findings.length < maxFindings) {
+      findings.push(...wrapperFindings(project, root, collectWrappers(project, validFiles), hashes).slice(0, maxFindings - findings.length));
+    }
   }
 
+  if (options.signal?.aborted) skipped.push({ filePath: "<typescript>", reason: "TypeScript scan aborted" });
   return {
     result: createScanResult({
       engine: "typescript-semantic",
@@ -591,6 +610,6 @@ export function scanTypeScriptFilesWithProjects(
   };
 }
 
-export function scanTypeScriptFiles(rootDir: string, inputPaths: string[]): ScanResult {
-  return scanTypeScriptFilesWithProjects(rootDir, inputPaths).result;
+export function scanTypeScriptFiles(rootDir: string, inputPaths: string[], options: TypeScriptScanOptions = {}): ScanResult {
+  return scanTypeScriptFilesWithProjects(rootDir, inputPaths, options).result;
 }

@@ -75,6 +75,7 @@ export async function runSmtEquivalence(
   try {
     const script = expressionEquivalenceSmt(spec);
     const result = await isolatedStdin(command, script, config, signal);
+    if (result.code !== 0) return abstained("smt", `SMT engine exited with code ${String(result.code)}: ${result.output}`, assumptions);
     const first = result.output.trim().split(/\r?\n/)[0];
     const status: FormalVerificationResult["status"] = first === "unsat" ? "verified" : first === "sat" ? "refuted" : "unknown";
     return {

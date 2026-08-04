@@ -126,6 +126,50 @@ function parse(source: string): Expression {
   return new Parser(tokenize(source)).parse();
 }
 
+type ExpressionType = "number" | "boolean";
+
+function expressionType(
+  expression: Expression,
+  variables: Map<string, ExperimentVariable["type"]>,
+  resultType?: ExpressionType,
+): ExpressionType {
+  if (expression.kind === "literal") return typeof expression.value === "boolean" ? "boolean" : "number";
+  if (expression.kind === "identifier") {
+    if (expression.name === "result") {
+      if (!resultType) throw new Error("result is only valid in a property expression");
+      return resultType;
+    }
+    const type = variables.get(expression.name);
+    if (!type) throw new Error(`unknown variable '${expression.name}'`);
+    return type === "boolean" ? "boolean" : "number";
+  }
+  if (expression.kind === "unary") {
+    const operand = expressionType(expression.operand, variables, resultType);
+    if (expression.operator === "!" && operand !== "boolean") throw new Error("! expects a boolean");
+    if (expression.operator === "-" && operand !== "number") throw new Error("unary - expects a number");
+    return operand;
+  }
+  const left = expressionType(expression.left, variables, resultType);
+  const right = expressionType(expression.right, variables, resultType);
+  if (expression.operator === "&&" || expression.operator === "||") {
+    if (left !== "boolean" || right !== "boolean") throw new Error(`${expression.operator} expects booleans`);
+    return "boolean";
+  }
+  if (["+", "-", "*", "/", "%"].includes(expression.operator)) {
+    if (left !== "number" || right !== "number") throw new Error(`${expression.operator} expects numbers`);
+    return "number";
+  }
+  if (["<", "<=", ">", ">="].includes(expression.operator)) {
+    if (left !== "number" || right !== "number") throw new Error(`${expression.operator} expects numbers`);
+    return "boolean";
+  }
+  if (expression.operator === "==" || expression.operator === "!=") {
+    if (left !== right) throw new Error(`${expression.operator} expects operands of the same type`);
+    return "boolean";
+  }
+  throw new Error(`unsupported operator '${expression.operator}'`);
+}
+
 function evaluate(expression: Expression, environment: Record<string, Value>): Value {
   if (expression.kind === "literal") return expression.value;
   if (expression.kind === "identifier") {
@@ -144,11 +188,17 @@ function evaluate(expression: Expression, environment: Record<string, Value>): V
   const left = evaluate(expression.left, environment);
   if (expression.operator === "&&") {
     if (typeof left !== "boolean") throw new Error("&& expects booleans");
-    return left && Boolean(evaluate(expression.right, environment));
+    if (!left) return false;
+    const right = evaluate(expression.right, environment);
+    if (typeof right !== "boolean") throw new Error("&& expects booleans");
+    return right;
   }
   if (expression.operator === "||") {
     if (typeof left !== "boolean") throw new Error("|| expects booleans");
-    return left || Boolean(evaluate(expression.right, environment));
+    if (left) return true;
+    const right = evaluate(expression.right, environment);
+    if (typeof right !== "boolean") throw new Error("|| expects booleans");
+    return right;
   }
   const right = evaluate(expression.right, environment);
   if (["+", "-", "*", "/", "%", "<", "<=", ">", ">="].includes(expression.operator)) {
@@ -379,8 +429,8 @@ function mutants(expression: Expression): Expression[] {
 
 function regressionTest(spec: ExperimentSpec, environment: Record<string, unknown>, index: number): string {
   const declarations = Object.entries(environment).map(([name, value]) => `const ${name} = ${JSON.stringify(value)};`).join(" ");
-  const original = spec.original.replace(/!=/g, "!==").replace(/==/g, "===");
-  const candidate = spec.candidate.replace(/!=/g, "!==").replace(/==/g, "===");
+  const original = spec.original.replace(/!=|==/g, (operator) => operator === "!=" ? "!==" : "===");
+  const candidate = spec.candidate.replace(/!=|==/g, (operator) => operator === "!=" ? "!==" : "===");
   return `test(${JSON.stringify(`${spec.id} regression ${index + 1}`)}, () => { ${declarations} const capture = (fn: () => unknown) => { try { return { ok: true, value: fn() }; } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; } }; expect(capture(() => (${candidate}))).toEqual(capture(() => (${original}))); });`;
 }
 
@@ -413,6 +463,10 @@ function toSmt(expression: Expression): string {
 }
 
 export function expressionEquivalenceSmt(spec: ExperimentSpec): string {
+  const variables = new Map(spec.variables.map((variable) => [variable.name, variable.type]));
+  const original = parse(spec.original);
+  const candidate = parse(spec.candidate);
+  if (expressionType(original, variables) !== expressionType(candidate, variables)) throw new Error("original and candidate expressions have different types");
   const declarations = spec.variables.map((variable) => `(declare-const ${variable.name} ${variable.type === "boolean" ? "Bool" : "Int"})`);
   const bounds = spec.variables.flatMap((variable) =>
     variable.type === "integer"
@@ -422,7 +476,7 @@ export function expressionEquivalenceSmt(spec: ExperimentSpec): string {
         ].filter((item): item is string => Boolean(item))
       : [],
   );
-  return [...declarations, ...bounds, `(assert (not (= ${toSmt(parse(spec.original))} ${toSmt(parse(spec.candidate))})))`, "(check-sat)", "(get-model)"].join("\n");
+  return [...declarations, ...bounds, `(assert (not (= ${toSmt(original)} ${toSmt(candidate)})))`, "(check-sat)", "(get-model)"].join("\n");
 }
 
 export function runExpressionExperiment(spec: ExperimentSpec): ExperimentResult {
@@ -436,10 +490,19 @@ export function runExpressionExperiment(spec: ExperimentSpec): ExperimentResult 
   try {
     const original = parse(spec.original);
     const candidate = parse(spec.candidate);
+    const variables = new Map(spec.variables.map((variable) => [variable.name, variable.type]));
+    const originalType = expressionType(original, variables);
+    const candidateType = expressionType(candidate, variables);
+    if (originalType !== candidateType) throw new Error("original and candidate expressions have different types");
     const propertyExpressions = spec.properties.map(parse);
+    for (const property of propertyExpressions) expressionType(property, variables, originalType);
     const metamorphicExpressions = spec.metamorphic.map((relation) => ({
       relation,
-      transforms: Object.fromEntries(Object.entries(relation.transform).map(([name, expression]) => [name, parse(expression)])),
+      transforms: Object.fromEntries(Object.entries(relation.transform).map(([name, expression]) => {
+        const transformed = parse(expression);
+        expressionType(transformed, variables);
+        return [name, transformed];
+      })),
     }));
     const generated = environments(spec.variables, spec.maximumCases);
     const originalOutcomes: Outcome[] = [];
@@ -452,8 +515,12 @@ export function runExpressionExperiment(spec: ExperimentSpec): ExperimentResult 
       candidateOutcomes.push(after);
       if (!equivalent(before, after) && counterexamples.length < 20) counterexamples.push({ environment, original: before, candidate: after });
       for (const property of propertyExpressions) {
-        const originalProperty = outcome(property, { ...environment, result: before.value as Value });
-        const candidateProperty = outcome(property, { ...environment, result: after.value as Value });
+        const originalProperty = before.ok
+          ? outcome(property, { ...environment, result: before.value as Value })
+          : { ok: false as const, error: `original expression failed: ${before.error ?? "unknown error"}` };
+        const candidateProperty = after.ok
+          ? outcome(property, { ...environment, result: after.value as Value })
+          : { ok: false as const, error: `candidate expression failed: ${after.error ?? "unknown error"}` };
         if ((!originalProperty.ok || originalProperty.value !== true || !candidateProperty.ok || candidateProperty.value !== true) && counterexamples.length < 20) {
           counterexamples.push({ environment, property: print(property), original: originalProperty, candidate: candidateProperty });
         }

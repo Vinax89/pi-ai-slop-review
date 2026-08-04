@@ -34,6 +34,7 @@ Remote critics are opt-in and receive evidence summaries—not source bodies. No
 ## Dependency provenance
 
 Registry queries use fixed HTTPS npm, PyPI, and OpenSSF endpoints, bounded responses, redirects disabled, and explicit allowlisting. Provenance evidence never triggers package installation.
+Evaluation artifacts are integrity-bound to SHA-256 hashes of code, corpus, executable rules, full library, schemas, package metadata, effective configuration, and runtime metadata; changing any input requires regenerating the artifact before using its metrics.
 
 ## Residual limitations
 

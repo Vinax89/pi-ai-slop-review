@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { isInside, normalizePath } from "../core/paths.ts";
 import { sha256 } from "../core/schema.ts";
@@ -10,7 +11,9 @@ export function safeProjectFile(rootDir: string, rawPath: string, maxBytes = 16 
   let decoded = rawPath;
   if (decoded.startsWith("file://")) {
     try {
-      decoded = new URL(decoded).pathname;
+      const url = new URL(decoded);
+      if (url.protocol !== "file:") return undefined;
+      decoded = fileURLToPath(url);
     } catch {
       // Invalid file URLs are rejected rather than reinterpreted as local paths.
       return undefined;
@@ -27,6 +30,9 @@ export function safeProjectFile(rootDir: string, rawPath: string, maxBytes = 16 
     // Unreadable files provide no evidence; callers surface the missing provider input.
     return undefined;
   }
+}
+export function validReportCoordinate(value: unknown, minimum = 1): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum;
 }
 
 export function offsetRange(filePath: string, source: string, start: number, end: number, sourceHash = sha256(source)): SourceRange {

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { assessScanCompleteness } from "./core/completeness.ts";
@@ -256,7 +256,17 @@ export function writeExport(
   }
   mkdirSync(path.dirname(outputPath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${outputPath}.${process.pid}.tmp`;
-  writeFileSync(temporaryPath, serializeExport(result, format), { encoding: "utf8", mode: 0o600 });
-  renameSync(temporaryPath, outputPath);
+  const descriptor = openSync(temporaryPath, "wx", 0o600);
+  try {
+    writeFileSync(descriptor, serializeExport(result, format), "utf8");
+  } finally {
+    closeSync(descriptor);
+  }
+  try {
+    renameSync(temporaryPath, outputPath);
+  } catch (error) {
+    rmSync(temporaryPath, { force: true });
+    throw error;
+  }
   return outputPath;
 }

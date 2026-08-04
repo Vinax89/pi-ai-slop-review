@@ -55,7 +55,7 @@ export async function federateEvidence(
       version: "1",
       capabilities: ["diagnostics", "types", "references", "dependencies"],
       supports: () => config.providers.analyzerReports.length > 0,
-      collect: async () => ({ run: { id: "analyzer-reports", version: "1", capabilities: ["diagnostics"], status: "completed" }, result: importAnalyzerReports(rootDir, config.providers.analyzerReports) }),
+      collect: async () => ({ run: { id: "analyzer-reports", version: "1", capabilities: ["diagnostics"], status: "completed" }, result: importAnalyzerReports(rootDir, config.providers.analyzerReports, config.limits.maxFindings) }),
     },
     {
       id: "coverage-reports",

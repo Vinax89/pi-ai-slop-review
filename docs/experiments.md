@@ -33,3 +33,4 @@ A proposal may include expression experiments. Every experiment must verify for 
 ## Independent critics
 
 Four roles independently seek support, counterexamples, behavioral issues, and test/security gaps. Responses are retained only as advisory context. A support/oppose response without a valid supplied evidence citation becomes abstention.
+The corpus runner exercises TypeScript, JavaScript, and Python cases independently in temporary repository roots; compatibility tests compile Python helpers against the 3.11 grammar floor and verify JavaScript scanning through TypeScript's `allowJs`/`checkJs` path.

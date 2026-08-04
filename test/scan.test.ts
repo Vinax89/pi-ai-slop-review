@@ -97,3 +97,25 @@ test("reports unsupported files without blocking supported files", async () => {
   assert.equal(result.skipped.length, 1);
   assert.match(result.skipped[0].reason, /unsupported/);
 });
+
+test("scan canonicalizes aliases and enforces configured native file limits", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-limits-"));
+  writeFileSync(path.join(root, "input.ts"), "const value = 1;\n");
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.limits.maxFileBytes = 4;
+  const result = await scanFiles(root, ["@./input.ts", path.join(root, "input.ts")], undefined, "explicit", { config });
+  assert.deepEqual(result.scannedFiles, []);
+  assert.equal(result.skipped.filter((item) => item.filePath === "input.ts").length, 1);
+  assert.match(result.skipped.find((item) => item.filePath === "input.ts")?.reason ?? "", /configured limit/);
+});
+
+test("scan abort signal prevents native providers from scanning", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-abort-"));
+  writeFileSync(path.join(root, "input.ts"), "const value = 1;\n");
+  const controller = new AbortController();
+  controller.abort();
+  const result = await scanFiles(root, ["input.ts"], controller.signal);
+  assert.equal(result.scannedFiles.length, 0);
+  assert.equal(result.completeness?.status, "abstained");
+  assert.ok(result.skipped.some((item) => /aborted/.test(item.reason)));
+});

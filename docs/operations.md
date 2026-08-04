@@ -2,7 +2,7 @@
 
 ## Runtime requirements
 
-- Node.js 22.5 or newer; Node 24 is tested.
+- Node.js 22.7 or newer; Node 24 is tested. The evaluation, benchmark, and test scripts use `--experimental-strip-types --experimental-transform-types`.
 - Python 3.11–3.13 for Python AST and `tomllib` manifest analysis.
 - Git for patch laboratories.
 - Bubblewrap on Linux for patch/formal execution. Unsupported hosts abstain from those operations.
@@ -45,5 +45,4 @@ npm run benchmark
 npm audit --omit=dev
 npm run validate
 ```
-
-`npm run evaluate` and `npm run benchmark` refresh `artifacts/evaluation.json` and `artifacts/benchmark.json`.
+`npm run evaluate` and `npm run benchmark` refresh `artifacts/evaluation.json` and `artifacts/benchmark.json`; each artifact includes SHA-256 hashes of code, corpus, executable rules, full library, schemas, package metadata, effective config, and runtime metadata, plus Python/Node runtime coverage metadata for evaluation.

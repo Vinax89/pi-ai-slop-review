@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { DEFAULT_CONFIG, type AiSlopConfig } from "../src/core/config.ts";
+import { importAnalyzerReports } from "../src/providers/analyzer-reports.ts";
+import { safeProjectFile } from "../src/providers/files.ts";
 import { scanFiles } from "../src/scan.ts";
-
 function root(): string {
   const directory = mkdtempSync(path.join(tmpdir(), "ai-slop-provider-"));
   writeFileSync(
@@ -215,4 +217,36 @@ process.stdin.on('data', chunk => {
   } finally {
     delete process.env.AI_SLOP_SECRET;
   }
+});
+
+test("decodes file URLs and rejects non-finite analyzer coordinates", () => {
+  const directory = root();
+  const sourcePath = path.join(directory, "file with spaces.ts");
+  writeFileSync(sourcePath, "const value = 1;\n");
+  const file = safeProjectFile(directory, pathToFileURL(sourcePath).toString());
+  assert.equal(file?.filePath, "file with spaces.ts");
+  const reportPath = path.join(directory, "eslint.json");
+  writeFileSync(reportPath, JSON.stringify([{
+    filePath: sourcePath,
+    messages: [
+      { ruleId: "bad", severity: 2, message: "bad", line: "Infinity", column: 1 },
+      { ruleId: "good", severity: 2, message: "good", line: 1, column: 1 },
+    ],
+  }]));
+  const result = importAnalyzerReports(directory, [{ kind: "eslint", path: "eslint.json" }]);
+  assert.equal(result.findings.length, 1);
+  assert.ok(result.skipped.some((item) => /non-finite/.test(item.reason)));
+});
+
+
+test("malformed analyzer records do not become default-coordinate findings", () => {
+  const directory = root();
+  writeFileSync(path.join(directory, "input.ts"), "const value = 1;\n");
+  writeFileSync(path.join(directory, "ruff.json"), JSON.stringify([
+    { filename: path.join(directory, "input.ts"), location: { row: "1", column: 1 }, code: "bad", message: "bad" },
+    { filename: path.join(directory, "input.ts"), location: { row: 1, column: 1 }, code: "good", message: "good" },
+  ]));
+  const result = importAnalyzerReports(directory, [{ kind: "ruff", path: "ruff.json" }]);
+  assert.equal(result.findings.length, 1);
+  assert.ok(result.skipped.some((item) => /non-finite or non-integral/.test(item.reason)));
 });

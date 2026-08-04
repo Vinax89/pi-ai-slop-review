@@ -2,9 +2,11 @@
 
 A conservative, read-only [Pi](https://pi.dev) extension for evidence-backed review of TypeScript, JavaScript, and Python changes.
 
-## Install
+## Requirements
 
-Requires Node.js 22.5 or newer.
+Requires Node.js 22.7 or newer because the package's TypeScript entry points use Node's type stripping and type transformation runtime flags. Node 24 is tested.
+
+The Pi TUI, TypeBox, and optional critic API integrations are declared as optional peer modules. The package entrypoint can be inspected or imported without those host peers; the Pi integration loads its UI/schema peers only when the extension factory runs, and critic support reports a clear missing-peer error only when `/slop_critics` is invoked.
 
 ```bash
 pi install npm:pi-ai-slop-review

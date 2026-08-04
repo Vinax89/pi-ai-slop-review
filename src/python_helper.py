@@ -12,7 +12,7 @@ import sys
 import sysconfig
 from typing import Any
 
-MAX_FILE_BYTES = 1024 * 1024
+MAX_FILE_BYTES = int(os.environ.get("PI_AI_SLOP_MAX_FILE_BYTES", str(1024 * 1024)))
 LOG_METHODS = {"debug", "error", "exception", "info", "log", "trace", "warn", "warning"}
 OPTIONAL_IMPORT_ERRORS = {"ImportError", "ModuleNotFoundError"}
 DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")

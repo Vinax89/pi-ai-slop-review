@@ -1,25 +1,65 @@
 {
-  "generatedAt": "2026-07-24T00:59:57.549Z",
-  "scanId": "scan:1a99a5b12a23e6e3da286336",
-  "paths": 71,
+  "generatedAt": "2026-08-04T08:16:40.341Z",
+  "scanId": "scan:549e9087f4d57c5e7bbd0999",
+  "paths": 75,
   "discoveryTruncated": false,
-  "scanned": 71,
+  "scanned": 75,
   "completeness": {
     "status": "complete",
-    "scannedFiles": 71,
+    "scannedFiles": 75,
     "skippedItems": 0,
     "reasons": []
   },
-  "activeFindings": 5,
+  "activeFindings": 10,
   "actionableFindings": 0,
   "findingsByRule": {
-    "data.hidden-catch-fallback": 2,
-    "errors.suppressed": 3
+    "errors.suppressed": 6,
+    "data.hidden-catch-fallback": 4
   },
   "findings": [
     {
-      "filePath": "src/providers/files.ts",
-      "line": 16,
+      "filePath": "index.ts",
+      "line": 120,
+      "ruleId": "errors.suppressed",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause is empty"
+    },
+    {
+      "filePath": "src/core/schema.ts",
+      "line": 50,
+      "ruleId": "errors.suppressed",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause is empty"
+    },
+    {
+      "filePath": "src/core/store.ts",
+      "line": 165,
+      "ruleId": "errors.suppressed",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause is empty"
+    },
+    {
+      "filePath": "src/diagnostics.ts",
+      "line": 36,
+      "ruleId": "data.hidden-catch-fallback",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause converts failure into a safe-looking return value"
+    },
+    {
+      "filePath": "src/evaluation/artifacts.ts",
+      "line": 77,
+      "ruleId": "errors.suppressed",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause is empty"
+    },
+    {
+      "filePath": "src/graph/provider.ts",
+      "line": 140,
       "ruleId": "data.hidden-catch-fallback",
       "confidence": "C2",
       "maximumAction": "observe",
@@ -27,7 +67,15 @@
     },
     {
       "filePath": "src/providers/files.ts",
-      "line": 28,
+      "line": 19,
+      "ruleId": "data.hidden-catch-fallback",
+      "confidence": "C2",
+      "maximumAction": "observe",
+      "message": "Catch clause converts failure into a safe-looking return value"
+    },
+    {
+      "filePath": "src/providers/files.ts",
+      "line": 31,
       "ruleId": "data.hidden-catch-fallback",
       "confidence": "C2",
       "maximumAction": "observe",
@@ -44,14 +92,6 @@
     {
       "filePath": "src/providers/lsp.ts",
       "line": 284,
-      "ruleId": "errors.suppressed",
-      "confidence": "C2",
-      "maximumAction": "observe",
-      "message": "Catch clause is empty"
-    },
-    {
-      "filePath": "src/providers/lsp.ts",
-      "line": 290,
       "ruleId": "errors.suppressed",
       "confidence": "C2",
       "maximumAction": "observe",

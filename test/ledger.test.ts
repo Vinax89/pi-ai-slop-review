@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { DEFAULT_CONFIG } from "../src/core/config.ts";
 import { AssuranceLedger, diffScans } from "../src/core/ledger.ts";
-import { createScanResult } from "../src/core/schema.ts";
+import { createScanResult, mergeScanResults } from "../src/core/schema.ts";
 import type { AiSlopConfig } from "../src/core/config.ts";
 import type { FindingDraft } from "../src/types.ts";
 
@@ -78,6 +78,44 @@ test("ledger ignores mutation paths that escape through a symlink", () => {
   assert.deepEqual(ledger.touchedPaths(), []);
 });
 
+
+test("ledger canonicalizes path aliases for mutation and verification lookup", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-slop-ledger-alias-"));
+  mkdirSync(path.join(root, "src"));
+  const file = path.join(root, "src/input.ts");
+  writeFileSync(file, "const value = 1;\n");
+  const ledger = new AssuranceLedger(root, config());
+  ledger.captureToolCall({ toolCallId: "alias-write", toolName: "write", input: { path: "@src/./input.ts" } });
+  writeFileSync(file, "const value = 2;\n");
+  ledger.captureToolResult({ toolCallId: "alias-write", toolName: "write", isError: false });
+  ledger.captureToolCall({ toolCallId: "alias-check", toolName: "bash", input: { command: "npm test" } });
+  ledger.captureToolResult({ toolCallId: "alias-check", toolName: "bash", isError: false });
+  assert.equal(ledger.verificationStatus([file])[0].fresh.length, 1);
+  assert.deepEqual(ledger.touchedPaths(), ["src/input.ts"]);
+});
+
+test("ledger reconstruction ignores malformed persisted events", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-ai-slop-ledger-invalid-"));
+  const ledger = new AssuranceLedger(root, config());
+  ledger.reconstruct([
+    { kind: "unknown" } as never,
+    {
+      schemaVersion: 1,
+      id: "ledger:valid",
+      kind: "mutation",
+      toolCallId: "write",
+      toolName: "write",
+      filePath: "missing.ts",
+      beforeHash: null,
+      afterHash: null,
+      changedRange: { start: 0, beforeEnd: 0, afterEnd: 0 },
+      succeeded: true,
+      timestamp: "2026-01-01T00:00:00.000Z",
+    },
+  ]);
+  assert.equal(ledger.entries().length, 1);
+  assert.deepEqual(ledger.touchedPaths(), ["missing.ts"]);
+});
 test("scan delta uses stable finding identity instead of line number", () => {
   const finding = (line: number): FindingDraft => ({
     anchor: "function:wrapper",
@@ -120,4 +158,70 @@ test("scan delta uses stable finding identity instead of line number", () => {
   const delta = diffScans(current, baseline);
   assert.equal(delta.added.length, 0);
   assert.equal(delta.unchanged.length, 1);
+});
+
+test("merged scans deduplicate findings with one stable identity", () => {
+  const finding: FindingDraft = {
+    anchor: "function:wrapper",
+    ruleId: "structure.pass-through-wrapper",
+    classification: "waste_candidate",
+    confidence: "C2",
+    risk: "R2",
+    maximumAction: "propose",
+    filePath: "input.ts",
+    line: 1,
+    column: 1,
+    start: 0,
+    end: 5,
+    sourceHash: "same",
+    message: "wrapper",
+    evidence: ["same evidence"],
+    counterEvidence: [],
+    unknown: [],
+  };
+  const make = () => createScanResult({
+    engine: "semantic-review",
+    engineVersion: "1",
+    rootDir: "/tmp/project",
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [finding],
+    skipped: [],
+  });
+  const merged = mergeScanResults("/tmp/project", [make(), make()]);
+  assert.equal(merged.findings.length, 1);
+});
+
+test("scan delta marks risk and source changes as changed", () => {
+  const make = (risk: FindingDraft["risk"], sourceHash: string): FindingDraft => ({
+    anchor: "function:wrapper",
+    ruleId: "structure.pass-through-wrapper",
+    classification: "waste_candidate",
+    confidence: "C2",
+    risk,
+    maximumAction: "propose",
+    filePath: "input.ts",
+    line: 1,
+    column: 1,
+    start: 0,
+    end: 5,
+    sourceHash,
+    message: "wrapper",
+    evidence: ["evidence"],
+    counterEvidence: [],
+    unknown: [],
+  });
+  const makeScan = (draft: FindingDraft) => createScanResult({
+    engine: "semantic-review",
+    engineVersion: "1",
+    rootDir: "/tmp/project",
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [draft],
+    skipped: [],
+  });
+  const delta = diffScans(makeScan(make("R1", "new")), makeScan(make("R2", "old")));
+  assert.equal(delta.changed.length, 1);
 });

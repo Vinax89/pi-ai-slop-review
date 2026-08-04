@@ -23,6 +23,7 @@ State writes use revision checks, a lock file, an atomic rename, and a previous-
 ## Provider authority
 
 Provider evidence retains provider ID, version, source hash, range, and strength. External analyzer fixes are evidence only, and multiple provider IDs do not imply independence. Unknown rules are capped at C2/observe. Counterevidence, R3 risk, unhealthy feedback, or insufficient calibrated evidence can only reduce authority.
+Evaluation artifacts record deterministic SHA-256 hashes for source code, executable rules, the complete evidence library, schemas, package metadata, effective configuration, runtime metadata, and the reason-labeled corpus so reported metrics can be reproduced against exact inputs.
 
 ## Repository graph
 

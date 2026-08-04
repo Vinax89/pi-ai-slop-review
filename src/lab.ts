@@ -1,18 +1,47 @@
 import { execFile, spawn } from "node:child_process";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { constants, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import path from "node:path";
 
 import type { AiSlopConfig } from "./core/config.ts";
 import { isExactConfiguredCommand, restrictedRuntime } from "./core/execution.ts";
+import { redactSensitive } from "./core/redaction.ts";
+import { hasSymlinkPath } from "./core/paths.ts";
+
 import { canonicalJson, fingerprint, sha256 } from "./core/schema.ts";
 import { StateStore } from "./core/store.ts";
 import { runExpressionExperiment } from "./experiments/expression.ts";
 import { buildGraphFacts } from "./graph/build.ts";
-import { SCHEMA_VERSION, type ExperimentSpec, type FindingRisk, type LabCheck, type LabRun, type Proposal } from "./types.ts";
+import { assertProposalAuthority } from "./policy/engine.ts";
+import { SCHEMA_VERSION, type ExperimentSpec, type FindingRisk, type LabCheck, type LabRun, type Proposal, type ScanResult } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
+async function withRepositoryLock<T>(rootDir: string, operation: () => Promise<T>): Promise<T> {
+  const absoluteRoot = path.resolve(rootDir);
+  if (hasSymlinkPath(absoluteRoot)) throw new Error("refusing laboratory operation in a symlinked repository path");
+  const lockPath = path.join(absoluteRoot, ".ai-slop-operation.lock");
+  if (hasSymlinkPath(lockPath)) throw new Error("refusing a symlinked laboratory operation lock");
+  let fd: number;
+  try {
+    fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("another laboratory operation is already in progress");
+    throw error;
+  }
+  try {
+    writeFileSync(fd, `${process.pid}\n`);
+    return await operation();
+  } finally {
+    closeSync(fd);
+    try {
+      unlinkSync(lockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
 
 interface PatchPaths {
   paths: string[];
@@ -39,10 +68,21 @@ function parsePatchPaths(patch: string): PatchPaths {
 
 function fileHash(rootDir: string, filePath: string): string | null {
   const absolute = path.resolve(rootDir, filePath);
-  if (!existsSync(absolute)) return null;
-  const stats = lstatSync(absolute);
-  if (!stats.isFile() || stats.isSymbolicLink()) throw new Error(`proposal path is not a regular file: ${filePath}`);
-  return sha256(readFileSync(absolute));
+  if (hasSymlinkPath(absolute)) throw new Error(`proposal path is not a regular file: ${filePath}`);
+  let fd: number;
+  try {
+    fd = openSync(absolute, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile()) throw new Error(`proposal path is not a regular file: ${filePath}`);
+    return sha256(readFileSync(fd));
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function matches(filePath: string, patterns: string[]): boolean {
@@ -50,6 +90,67 @@ function matches(filePath: string, patterns: string[]): boolean {
     const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*");
     return new RegExp(`^${escaped}$`).test(filePath);
   });
+}
+
+function reviewContentHash(rootDir: string, review: ScanResult): string {
+  const scannedFiles = [...new Set(review.scope.paths)].sort();
+  const sourceHashes = Object.fromEntries(scannedFiles.map((filePath) => [filePath, fileHash(rootDir, filePath)]));
+  return sha256(canonicalJson({ scannedFiles, sourceHashes }));
+}
+
+function assertReviewAuthorityCurrent(rootDir: string, review: ScanResult, findingIds: string[]): void {
+  if (!review.scanId || !review.scope.contentHash) throw new Error("latest review integrity is incomplete");
+  if (reviewContentHash(rootDir, review) !== review.scope.contentHash) throw new Error("latest review content hash is stale; run a fresh review before creating a proposal");
+  for (const findingId of findingIds) {
+    const finding = review.findings.find((item) => item.id === findingId);
+    if (finding && fileHash(rootDir, finding.filePath) !== finding.sourceHash) {
+      throw new Error(`latest review is stale for ${finding.filePath}; run a fresh review before creating a proposal`);
+    }
+  }
+}
+
+function proposalIntegrityFingerprint(proposal: Proposal): string {
+  return fingerprint("proposal", {
+    schemaVersion: proposal.schemaVersion,
+    fileHashes: proposal.fileHashes,
+    patch: proposal.patch,
+    findingIds: proposal.findingIds,
+    risk: proposal.risk,
+    proofObligations: proposal.proofObligations,
+    commands: proposal.commands,
+    deletesFiles: proposal.deletesFiles,
+    criticalPaths: proposal.criticalPaths,
+    experiments: proposal.experiments,
+  });
+}
+
+function labRunIntegrityFingerprint(run: LabRun): string {
+  return fingerprint("lab-run", {
+    proposalId: run.proposalId,
+    completedAt: run.completedAt,
+    checks: run.checks,
+    status: run.status,
+    networkIsolation: run.networkIsolation,
+    publicSurfaceChanged: run.publicSurfaceChanged,
+    experimentResults: run.experimentResults,
+    diagnostic: run.diagnostic,
+  });
+}
+
+function assertProposalIntegrity(proposal: Proposal): void {
+  if (proposal.id !== proposalIntegrityFingerprint(proposal)) throw new Error("proposal integrity check failed");
+}
+
+function assertLabRunIntegrity(run: LabRun, proposal: Proposal): void {
+  if (run.proposalId !== proposal.id || run.createdAt !== proposal.createdAt || run.networkIsolation !== "bubblewrap" || run.id !== labRunIntegrityFingerprint(run)) {
+    throw new Error("laboratory run integrity check failed");
+  }
+}
+
+function findUniqueProposal(proposals: Proposal[], input: string): Proposal | undefined {
+  const matches = proposals.filter((item) => item.id === input || item.id.startsWith(input));
+  if (matches.length > 1) throw new Error(`proposal prefix '${input}' is ambiguous`);
+  return matches[0];
 }
 
 async function git(rootDir: string, args: string[], maxBuffer = 8 * 1024 * 1024): Promise<string> {
@@ -191,17 +292,19 @@ async function runIsolated(
       succeeded: true,
       exitCode: 0,
       durationMs: Math.round(performance.now() - started),
-      output: `${stdout}${stderr}`.slice(-64 * 1024),
+      output: redactSensitive(`${stdout}${stderr}`.slice(-64 * 1024)),
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const details = error && typeof error === "object" ? error as { code?: unknown; stdout?: unknown; stderr?: unknown; message?: unknown } : {};
+    const output = `${details.stdout ?? ""}${details.stderr ?? ""}${details.message ?? String(error)}`.slice(-64 * 1024);
     return {
-      name: command.join(" "),
+      name: redactSensitive(command.join(" ")),
       phase,
-      command,
+      command: command.map(redactSensitive),
       succeeded: false,
-      exitCode: typeof error?.code === "number" ? error.code : null,
+      exitCode: typeof details.code === "number" ? details.code : null,
       durationMs: Math.round(performance.now() - started),
-      output: `${error?.stdout ?? ""}${error?.stderr ?? ""}${error?.message ?? error}`.slice(-64 * 1024),
+      output: redactSensitive(output),
     };
   }
 }
@@ -237,17 +340,38 @@ export async function createProposal(
     if (!isExactConfiguredCommand(command, config.execution.commands)) throw new Error(`command is not an exact execution.commands entry: ${command.join(" ")}`);
   }
   const parsed = parsePatchPaths(input.patch);
+  const findingIds = [...new Set((input.findingIds ?? []).map((id) => id.trim()).filter(Boolean))];
+  const store = new StateStore(rootDir, stateRoot);
+  const latestReview = store.load().baselines["last-review"];
+  if (!latestReview) throw new Error("proposal requires a persisted latest review");
+  assertReviewAuthorityCurrent(rootDir, latestReview, findingIds);
+  assertProposalAuthority(latestReview, findingIds, input.risk, parsed.paths);
   const baseCommit = (await git(rootDir, ["rev-parse", "HEAD"])).trim();
   const fileHashes = Object.fromEntries(parsed.paths.map((filePath) => [filePath, fileHash(rootDir, filePath)]));
   const criticalPaths = parsed.paths.filter((filePath) => matches(filePath, config.lab.criticalPatterns));
   const proposal: Proposal = {
     schemaVersion: SCHEMA_VERSION,
-    id: fingerprint("proposal", { baseCommit, fileHashes, patch: input.patch, proofObligations: input.proofObligations }),
+    id: proposalIntegrityFingerprint({
+      schemaVersion: SCHEMA_VERSION,
+      id: "",
+      createdAt: "",
+      baseCommit,
+      patch: input.patch,
+      fileHashes,
+      findingIds,
+      risk: input.risk,
+      proofObligations: input.proofObligations,
+      commands: input.commands,
+      deletesFiles: parsed.deletesFiles,
+      criticalPaths,
+      experiments: input.experiments ?? [],
+      status: "candidate",
+    }),
     createdAt: new Date().toISOString(),
     baseCommit,
     patch: input.patch,
     fileHashes,
-    findingIds: [...new Set(input.findingIds ?? [])],
+    findingIds,
     risk: input.risk,
     proofObligations: input.proofObligations,
     commands: input.commands,
@@ -256,7 +380,6 @@ export async function createProposal(
     experiments: input.experiments ?? [],
     status: "candidate",
   };
-  const store = new StateStore(rootDir, stateRoot);
   store.update((state) => {
     state.proposals = [...state.proposals.filter((item) => item.id !== proposal.id), proposal];
   });
@@ -273,15 +396,17 @@ export async function validateProposal(
 ): Promise<LabRun> {
   const store = new StateStore(rootDir, stateRoot);
   const state = store.load();
-  const proposal = state.proposals.find((item) => item.id === proposalId || item.id.startsWith(proposalId));
+  const proposal = findUniqueProposal(state.proposals, proposalId);
   if (!proposal) throw new Error(`proposal '${proposalId}' was not found`);
   if (!trustedProject || !config.execution.trusted) throw new Error("laboratory validation requires Pi project trust and execution.trusted configuration");
+  const currentHead = (await git(rootDir, ["rev-parse", "HEAD"])).trim();
+  if (currentHead !== proposal.baseCommit) throw new Error(`proposal base commit ${proposal.baseCommit} is not the current HEAD ${currentHead}`);
   if (!existsSync("/usr/bin/bwrap")) throw new Error("required bubblewrap network isolation is unavailable");
   const workspaceParent = mkdtempSync(path.join(tmpdir(), "ai-slop-lab-"));
   const baselineWorkspace = path.join(workspaceParent, "baseline");
   const candidateWorkspace = path.join(workspaceParent, "candidate");
   const checks: LabCheck[] = [];
-  let status: LabRun["status"] = "aborted";
+  let status: LabRun["status"] = "cancelled";
   let diagnostic: string | undefined;
   let publicSurfaceChanged = false;
   const experimentResults = proposal.experiments.map(runExpressionExperiment);
@@ -330,7 +455,7 @@ export async function validateProposal(
     }
     status = checks.every((check) => check.succeeded) ? "verified" : "rejected";
   } catch (error) {
-    status = signal?.aborted ? "aborted" : "rejected";
+    status = signal?.aborted ? "cancelled" : "rejected";
     diagnostic = error instanceof Error ? error.message : String(error);
   } finally {
     await git(rootDir, ["worktree", "remove", "--force", baselineWorkspace]).catch(() => undefined);
@@ -338,57 +463,112 @@ export async function validateProposal(
     rmSync(workspaceParent, { recursive: true, force: true });
   }
   const completedAt = new Date().toISOString();
+  const safeChecks = checks.map((check) => ({
+    ...check,
+    name: redactSensitive(check.name),
+    command: check.command?.map(redactSensitive),
+    output: redactSensitive(check.output),
+  }));
+  const safeExperimentResults = experimentResults.map((experiment) => ({
+    ...experiment,
+    diagnostic: experiment.diagnostic === undefined ? undefined : redactSensitive(experiment.diagnostic),
+  }));
+  const safeDiagnostic = diagnostic === undefined ? undefined : redactSensitive(diagnostic);
   const run: LabRun = {
     schemaVersion: SCHEMA_VERSION,
-    id: fingerprint("lab-run", { proposalId: proposal.id, completedAt, checks, status }),
+    id: labRunIntegrityFingerprint({
+      schemaVersion: SCHEMA_VERSION,
+      id: "",
+      proposalId: proposal.id,
+      createdAt: proposal.createdAt,
+      completedAt,
+      networkIsolation: "bubblewrap",
+      checks: safeChecks,
+      publicSurfaceChanged,
+      experimentResults: safeExperimentResults,
+      status,
+      diagnostic: safeDiagnostic,
+    }),
     proposalId: proposal.id,
     createdAt: proposal.createdAt,
     completedAt,
     networkIsolation: "bubblewrap",
-    checks,
+    checks: safeChecks,
     publicSurfaceChanged,
-    experimentResults,
+    experimentResults: safeExperimentResults,
     status,
-    diagnostic,
+    diagnostic: safeDiagnostic,
   };
   store.update((next) => {
     next.labRuns.push(run);
     const candidate = next.proposals.find((item) => item.id === proposal.id);
-    if (candidate) candidate.status = status === "verified" ? "verified" : "rejected";
+    if (candidate && status !== "cancelled") candidate.status = status === "verified" ? "verified" : "rejected";
   });
   return run;
 }
 
-export async function applyProposal(rootDir: string, proposalId: string, stateRoot?: string): Promise<Proposal> {
+function assertProposalHashes(rootDir: string, hashes: Record<string, string | null>, context: string): void {
+  for (const [filePath, expectedHash] of Object.entries(hashes)) {
+    if (fileHash(rootDir, filePath) !== expectedHash) throw new Error(`${context}: ${filePath}`);
+  }
+}
+
+async function applyProposalUnlocked(rootDir: string, proposalId: string, stateRoot?: string): Promise<Proposal> {
   const store = new StateStore(rootDir, stateRoot);
   const state = store.load();
-  const proposal = state.proposals.find((item) => item.id === proposalId || item.id.startsWith(proposalId));
+  const proposal = findUniqueProposal(state.proposals, proposalId);
   if (!proposal) throw new Error(`proposal '${proposalId}' was not found`);
+  assertProposalHashes(rootDir, proposal.fileHashes, "source hash changed after validation");
+  assertProposalIntegrity(proposal);
+  const currentHead = (await git(rootDir, ["rev-parse", "HEAD"])).trim();
+  if (currentHead !== proposal.baseCommit) throw new Error(`proposal base commit ${proposal.baseCommit} is not the current HEAD ${currentHead}`);
+  const latestReview = state.baselines["last-review"];
+  if (!latestReview) throw new Error("proposal requires a persisted latest review");
+  assertReviewAuthorityCurrent(rootDir, latestReview, proposal.findingIds);
+  assertProposalAuthority(latestReview, proposal.findingIds, proposal.risk, parsePatchPaths(proposal.patch).paths);
   const run = [...state.labRuns].reverse().find((item) => item.proposalId === proposal.id && item.status === "verified");
   if (!run || proposal.status !== "verified") throw new Error("proposal has no current verified laboratory run");
+  assertLabRunIntegrity(run, proposal);
+  if (!run.checks.length || run.checks.some((check) => !check.succeeded) || run.publicSurfaceChanged || run.experimentResults.some((experiment) => experiment.status !== "verified")) {
+    throw new Error("verified laboratory run failed integrity or contains unsuccessful checks");
+  }
   if (proposal.risk === "R3") throw new Error("R3 proposals cannot be applied by the extension");
   if (proposal.deletesFiles) throw new Error("file-deleting proposals cannot be applied by the extension");
   if (proposal.criticalPaths.length) throw new Error(`critical-path proposals cannot be applied by the extension: ${proposal.criticalPaths.join(", ")}`);
-  for (const [filePath, expectedHash] of Object.entries(proposal.fileHashes)) {
-    if (fileHash(rootDir, filePath) !== expectedHash) throw new Error(`source hash changed after validation: ${filePath}`);
-  }
+  assertProposalHashes(rootDir, proposal.fileHashes, "source hash changed after validation");
   await gitApply(rootDir, ["--check", "--whitespace=error-all"], proposal.patch);
+  assertProposalHashes(rootDir, proposal.fileHashes, "source hash changed during apply check");
   await gitApply(rootDir, ["--whitespace=error-all"], proposal.patch);
+  proposal.appliedFileHashes = Object.fromEntries(Object.keys(proposal.fileHashes).map((filePath) => [filePath, fileHash(rootDir, filePath)]));
   proposal.status = "applied";
   store.update((next) => {
     const target = next.proposals.find((item) => item.id === proposal.id);
-    if (target) target.status = "applied";
+    if (target) {
+      target.status = "applied";
+      target.appliedFileHashes = proposal.appliedFileHashes;
+    }
   });
   return proposal;
 }
 
-export async function rollbackProposal(rootDir: string, proposalId: string, stateRoot?: string): Promise<Proposal> {
+export async function applyProposal(rootDir: string, proposalId: string, stateRoot?: string): Promise<Proposal> {
+  return withRepositoryLock(rootDir, () => applyProposalUnlocked(rootDir, proposalId, stateRoot));
+}
+
+async function rollbackProposalUnlocked(rootDir: string, proposalId: string, stateRoot?: string): Promise<Proposal> {
   const store = new StateStore(rootDir, stateRoot);
   const state = store.load();
-  const proposal = state.proposals.find((item) => item.id === proposalId || item.id.startsWith(proposalId));
+  const proposal = findUniqueProposal(state.proposals, proposalId);
   if (!proposal || proposal.status !== "applied") throw new Error("only an applied proposal can be rolled back");
+  if (proposal) assertProposalIntegrity(proposal);
+  const currentHead = (await git(rootDir, ["rev-parse", "HEAD"])).trim();
+  if (currentHead !== proposal.baseCommit) throw new Error(`proposal base commit ${proposal.baseCommit} is not the current HEAD ${currentHead}`);
+  if (!proposal.appliedFileHashes) throw new Error("applied proposal has no post-apply hash guard");
+  assertProposalHashes(rootDir, proposal.appliedFileHashes, "applied file hash changed before rollback");
   await gitApply(rootDir, ["--reverse", "--check"], proposal.patch);
+  assertProposalHashes(rootDir, proposal.appliedFileHashes, "applied file hash changed during rollback check");
   await gitApply(rootDir, ["--reverse"], proposal.patch);
+  assertProposalHashes(rootDir, proposal.fileHashes, "rollback produced unexpected file hashes");
   proposal.status = "rolled-back";
   store.update((next) => {
     const target = next.proposals.find((item) => item.id === proposal.id);
@@ -397,7 +577,23 @@ export async function rollbackProposal(rootDir: string, proposalId: string, stat
   return proposal;
 }
 
+export async function rollbackProposal(rootDir: string, proposalId: string, stateRoot?: string): Promise<Proposal> {
+  return withRepositoryLock(rootDir, () => rollbackProposalUnlocked(rootDir, proposalId, stateRoot));
+}
+
 export function listLaboratory(rootDir: string, stateRoot?: string): { proposals: Proposal[]; runs: LabRun[] } {
   const state = new StateStore(rootDir, stateRoot).load();
-  return { proposals: state.proposals, runs: state.labRuns };
+  return {
+    proposals: state.proposals.map((proposal) => ({ ...proposal, commands: proposal.commands.map((command) => command.map(redactSensitive)) })),
+    runs: state.labRuns.map((run) => ({
+      ...run,
+      checks: run.checks.map((check) => ({
+        ...check,
+        name: redactSensitive(check.name),
+        command: check.command?.map(redactSensitive),
+        output: redactSensitive(check.output),
+      })),
+      diagnostic: run.diagnostic === undefined ? undefined : redactSensitive(run.diagnostic),
+    })),
+  };
 }

@@ -6,7 +6,8 @@
 
 ## Promotion metrics
 
-- Actionable precision, not finding volume.
+- Actionable precision is `non-hard-negative propose/delegate actions / all propose/delegate actions`; it is `null` when no actionable finding is emitted.
+- Case correctness is stricter than actionable precision: expected action must match, expected confidence (when present) must match, and every declared veto must occur in matching counterevidence.
 - Unsafe hard-negative actions must remain zero.
 - Per-rule acceptance and rejection reasons.
 - Wilson lower bounds and selective risk thresholds after at least 20 local samples.
@@ -18,10 +19,10 @@ Unknown or unhealthy rules are observation-only. Any unsafe feedback disables pr
 
 ## Current automated gates
 
-`npm run evaluate` requires every bundled case to match its expected action, zero unsafe hard-negative actions, no repository split leakage, and a non-empty holdout. The generated result is `artifacts/evaluation.json`.
+`npm run evaluate` validates unique IDs, non-empty train/validation/holdout splits, repository isolation, anchored action/confidence/veto expectations, zero unsafe hard-negative actions, and writes language coverage plus Node/Python runtime metadata. Artifacts are integrity-bound to deterministic SHA-256 hashes of code, corpus, executable rules, full library, schemas, package lock metadata, effective configuration, and runtime metadata.
+
 
 The corpus is a regression suite, not a claim of population-level accuracy. Real-repository expansion must preserve licensing, blind annotators to provenance, record disagreements, and keep evaluation repositories out of rule development.
 
 ## Performance
-
-`npm run benchmark` measures a deterministic 40-file TypeScript fixture, cold/warm federated scans, graph query latency, and RSS change. Targets are directional and cannot justify weaker correctness or security.
+`npm run benchmark` measures a deterministic 40-file TypeScript fixture, asserts cold/warm scan correctness and complete coverage plus graph-query identity, records cold/warm federated scans, graph query latency, RSS change, runtime metadata, and writes the same expanded input hashes to `artifacts/benchmark.json`. Targets are directional and cannot justify weaker correctness or safety.
