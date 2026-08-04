@@ -33,9 +33,15 @@ Pi packages execute code with the user's privileges. Review the source and [`doc
 - `/slop-audit` explicitly runs repository-wide review of up to 10,000 supported files by default; TypeScript stages reuse project programs and Python helpers run in up to four bounded batches concurrently.
 - Every review or audit reports `complete`, `partial`, or `abstained`; incomplete results are never presented as clean. A weighted-severity Markdown report with evidence, possible remediation, and suggested verification is written to private extension state.
 - `/slop-findings` opens the TUI finding picker; a finding ID prefix opens it directly.
+- `/slop-triage` summarizes evidence, counterevidence, uncertainty, and human-review guidance; findings are never treated as proof that code is removable.
 - `/slop-timeline` shows content-hash-valid mutations and verification freshness.
 - `/slop-claims <text>` checks deterministic completion claims against configured evidence.
 - `/slop-context <symbol-or-path>` queries callers, tests, specifications, and public-surface context.
+- The `slop_intent` tool builds an evidence-cited decision trace plus paper-derived dimensions (relevance, factuality, density, repetition, templatedness, coherence, and tone). It accepts an optional artifact/task/audience review profile; unknown dimensions remain unknown, the LLM interprets the evidence, and a human makes the final determination.
+- `slop_intent` can compute bounded local text/code forensics when `includeForensics` is enabled (default): a model-free document-bigram perplexity proxy, sentence/line burstiness, argument dependency, falsifiable-claim and jargon rates, section interchangeability, repetition and boilerplate rates, logic-density rates, and a local stylometric fingerprint. `calibrateProjectSignals` accepts caller-supplied source-hash-linked history for descriptive density drift; it does not read Git history or label automation.
+- `slop_provenance` verifies bounded project-local artifact hashes and Ed25519-signed provenance manifests against configured trust keys, then checks explicitly linked cross-modal descriptors for missing links, timestamp mismatches, and caption inconsistencies. Trusted provenance supports origin assertions but does not prove authorship or synthetic generation.
+- `slop_clusters` analyzes caller-supplied offline publishing or repository events for synchronized shared hashes/templates and reports domain-level repetition patterns. It performs no network collection, account termination, or automatic downranking.
+- Full vendor C2PA profile coverage, SynthID detection, generator-specific neural classifiers, and platform-scale S-CTS coordination remain unsupported until explicit media-ingestion, detector, reference-corpus, and network-evidence contracts exist.
 - `/slop-suppress`, `/slop-unsuppress`, and `/slop-feedback` manage reasoned local policy evidence.
 - `/slop-rules` reports policy decisions and calibrated rule health.
 - `/slop-export markdown|json|sarif [path]` exports the latest evidence; omitted paths use private extension state.
@@ -44,7 +50,7 @@ Pi packages execute code with the user's privileges. Review the source and [`doc
 - `/slop-experiment` runs bounded pure-expression property, metamorphic, shadow, mutation, invariant, regression-generation, equality-saturation, and CEGIS checks.
 - `/slop-formal` runs explicitly enabled SMT expression equivalence or Alive2-compatible LLVM translation validation through exact configured, network-isolated commands.
 - `/slop-retrieve` ranks local graph context without uploading source. `/slop-critics` is an opt-in remote advisory panel whose non-abstaining responses must cite existing deterministic evidence IDs.
-- The `slop_review`, `slop_context`, `slop_propose`, `slop_verify`, `slop_experiment`, `slop_formal`, `slop_retrieve`, and `slop_critics` tools expose the same capabilities to the agent. Agent tools never apply patches to the real checkout.
+- The `slop_review`, `slop_context`, `slop_intent`, `slop_provenance`, `slop_clusters`, `slop_propose`, `slop_verify`, `slop_experiment`, `slop_formal`, `slop_retrieve`, and `slop_critics` tools expose the same capabilities to the agent. Agent tools never apply patches to the real checkout.
 
 The scanner federates a TypeScript `Program`/`TypeChecker`, an isolated Python stdlib AST helper, explicitly trusted language servers, SARIF 2.1, ESLint/Ruff/Pyright/Knip reports, LCOV/coverage.py reports, and local dependency provenance. It reports:
 

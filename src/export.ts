@@ -256,16 +256,38 @@ export function writeExport(
   }
   mkdirSync(path.dirname(outputPath), { recursive: true, mode: 0o700 });
   const temporaryPath = `${outputPath}.${process.pid}.tmp`;
-  const descriptor = openSync(temporaryPath, "wx", 0o600);
+  const cleanupTemporary = (): void => {
+    try {
+      rmSync(temporaryPath, { force: true });
+    } catch {
+      // Preserve the original export failure if cleanup itself is unavailable.
+    }
+  };
+  let descriptor: number | undefined;
   try {
-    writeFileSync(descriptor, serializeExport(result, format), "utf8");
-  } finally {
-    closeSync(descriptor);
+    const opened = openSync(temporaryPath, "wx", 0o600);
+    descriptor = opened;
+    try {
+      writeFileSync(opened, serializeExport(result, format), "utf8");
+    } finally {
+      closeSync(opened);
+      descriptor = undefined;
+    }
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // The original write/close failure is more useful to callers.
+      }
+    }
+    cleanupTemporary();
+    throw error;
   }
   try {
     renameSync(temporaryPath, outputPath);
   } catch (error) {
-    rmSync(temporaryPath, { force: true });
+    cleanupTemporary();
     throw error;
   }
   return outputPath;

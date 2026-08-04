@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -161,4 +161,45 @@ test("maps Unicode Python ranges to JavaScript UTF-16 offsets", async () => {
   const disk = readFileSync(path.join(root, "input.py"), "utf8");
   assert.match(disk.slice(wrapper.start, wrapper.end), /def wrapper/);
   assert.equal(wrapper.sourceHash.length, 64);
+});
+
+test("accepts configured Python helper output above Node's default buffer and skips output-limit failures", async () => {
+  const root = project({ "input.py": "value = 1\n" });
+  const helper = path.join(root, "large-output-helper.py");
+  writeFileSync(
+    helper,
+    [
+      "#!/usr/bin/env python3",
+      "import json",
+      "import sys",
+      "",
+      'payload = {"engineVersion": "test-helper", "scannedFiles": [sys.argv[-1]], "findings": [], "skipped": []}',
+      'sys.stdout.write(json.dumps(payload) + (" " * (2 * 1024 * 1024)))',
+      "",
+    ].join("\n"),
+  );
+  chmodSync(helper, 0o755);
+
+  const previousPython = process.env.PI_AI_SLOP_PYTHON;
+  process.env.PI_AI_SLOP_PYTHON = helper;
+  try {
+    const accepted = await scanPythonFiles(root, ["input.py"], undefined, {
+      maxOutputBytes: 3 * 1024 * 1024,
+      commandTimeoutMs: 5_000,
+    });
+    assert.deepEqual(accepted.scannedFiles, ["input.py"]);
+    assert.deepEqual(accepted.skipped, []);
+
+    const limited = await scanPythonFiles(root, ["input.py"], undefined, {
+      maxOutputBytes: 64 * 1024,
+      commandTimeoutMs: 5_000,
+    });
+    assert.deepEqual(limited.scannedFiles, []);
+    assert.equal(limited.findings.length, 0);
+    assert.equal(limited.skipped.length, 1);
+    assert.match(limited.skipped[0].reason, /maxBuffer|exceeded|length/i);
+  } finally {
+    if (previousPython === undefined) delete process.env.PI_AI_SLOP_PYTHON;
+    else process.env.PI_AI_SLOP_PYTHON = previousPython;
+  }
 });

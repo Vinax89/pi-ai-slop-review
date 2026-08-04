@@ -44,19 +44,29 @@ export function canonicalFilePath(rootDir: string, rawPath: string): string {
     root = path.resolve(rootDir);
   }
   const candidate = path.resolve(root, rawPath.replace(/^@/, ""));
-  let resolved = candidate;
   try {
-    resolved = realpathSync(candidate);
+    const resolved = realpathSync(candidate);
+    if (isInside(root, resolved)) return normalizePath(path.relative(root, resolved));
   } catch {
     // Keep the lexical path for files that do not exist yet.
   }
-  return normalizePath(isInside(root, resolved) ? path.relative(root, resolved) : path.relative(root, candidate));
+  return normalizePath(path.relative(root, candidate));
 }
 
 function fileContentHash(rootDir: string, filePath: string, fallback?: string): string | null {
-  const absolute = path.resolve(path.resolve(rootDir), filePath);
+  let root: string;
   try {
-    if (statSync(absolute).isFile()) return sha256(readFileSync(absolute));
+    root = realpathSync(rootDir);
+  } catch {
+    root = path.resolve(rootDir);
+  }
+  const absolute = path.resolve(root, filePath);
+  const relative = path.relative(root, absolute);
+  if (relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative))) return null;
+  try {
+    const resolved = realpathSync(absolute);
+    if (!isInside(root, resolved)) return null;
+    if (statSync(resolved).isFile()) return sha256(readFileSync(resolved));
   } catch {
     // A skipped or removed file has no current content hash.
   }

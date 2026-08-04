@@ -390,11 +390,12 @@ async function runPythonGraphHelper(
   signal?: AbortSignal,
   maxFileBytes = 1024 * 1024,
   maxOutputBytes = 8 * 1024 * 1024,
+  commandTimeoutMs = 120_000,
 ): Promise<PythonGraphOutput> {
   const { stdout } = await execFileAsync(process.env.PI_AI_SLOP_PYTHON ?? "python3", ["-I", "-S", PYTHON_HELPER, rootDir, ...paths], {
     encoding: "utf8",
     maxBuffer: maxOutputBytes,
-    timeout: 30_000,
+    timeout: commandTimeoutMs,
     signal,
     env: { ...process.env, PI_AI_SLOP_MAX_FILE_BYTES: String(maxFileBytes) },
   });
@@ -430,6 +431,7 @@ async function extractPython(
   signal?: AbortSignal,
   maxFileBytes = 1024 * 1024,
   maxOutputBytes = 8 * 1024 * 1024,
+  commandTimeoutMs = 120_000,
 ): Promise<{ facts: GraphFileFacts[]; errors: Record<string, string> }> {
   if (!paths.length) return { facts: [], errors: {} };
   const batches = Array.from({ length: Math.ceil(paths.length / PYTHON_BATCH_SIZE) }, (_, index) =>
@@ -446,9 +448,14 @@ async function extractPython(
         continue;
       }
       try {
-        outputs[index] = await runPythonGraphHelper(rootDir, batch, signal, maxFileBytes, maxOutputBytes);
+        outputs[index] = await runPythonGraphHelper(rootDir, batch, signal, maxFileBytes, maxOutputBytes, commandTimeoutMs);
       } catch (error) {
-        const message = signal?.aborted ? "Python graph scan aborted" : `Python graph scan unavailable: ${error instanceof Error ? error.message : String(error)}`;
+        const detail = error instanceof Error ? error.message : String(error);
+        const message = signal?.aborted
+          ? "Python graph scan aborted"
+          : detail.startsWith("Python graph helper ")
+            ? `Python graph scan invalid: ${detail}`
+            : `Python graph scan unavailable: ${detail}`;
         outputs[index] = { files: {}, errors: Object.fromEntries(batch.map((filePath) => [filePath, message])) };
       }
     }
@@ -689,7 +696,7 @@ export async function buildGraphFacts(
     .map((filePath) => normalizePath(path.relative(root, filePath)));
   const markdownPaths = valid.filter((filePath) => path.extname(filePath).toLowerCase() === ".md").map((filePath) => normalizePath(path.relative(root, filePath)));
   const packagePaths = valid.filter((filePath) => path.basename(filePath) === "package.json").map((filePath) => normalizePath(path.relative(root, filePath)));
-  const python = await extractPython(root, pythonPaths, signal, config.limits.maxFileBytes, config.limits.maxOutputBytes);
+  const python = await extractPython(root, pythonPaths, signal, config.limits.maxFileBytes, config.limits.maxOutputBytes, config.limits.commandTimeoutMs);
   if (signal?.aborted) {
     return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])) };
   }

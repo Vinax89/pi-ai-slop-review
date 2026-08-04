@@ -337,18 +337,38 @@ async function collectLanguage(
     await delay(150, signal);
     for (const file of files) {
       const uri = pathToFileURL(file.absolutePath).toString();
-      for (const diagnostic of diagnostics.get(uri) ?? []) {
-        const range = sourceRange(
+      for (const rawDiagnostic of diagnostics.get(uri) ?? []) {
+        const diagnostic = rawDiagnostic as Partial<LspDiagnostic>;
+        const range = diagnostic.range;
+        const positions = [
+          range?.start?.line,
+          range?.start?.character,
+          range?.end?.line,
+          range?.end?.character,
+        ];
+        if (
+          !range ||
+          typeof diagnostic.message !== "string" ||
+          positions.some((value) => typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+        ) {
+          skipped.push({
+            filePath: file.filePath,
+            reason: `language server emitted a malformed diagnostic`,
+            providerId: `lsp-${language}`,
+          });
+          continue;
+        }
+        const source = sourceRange(
           file.filePath,
           file.source,
-          diagnostic.range.start.line + 1,
-          diagnostic.range.start.character + 1,
-          diagnostic.range.end.line + 1,
-          diagnostic.range.end.character + 1,
+          range.start.line + 1,
+          range.start.character + 1,
+          range.end.line + 1,
+          range.end.character + 1,
         );
         const code = lspCode(diagnostic.code);
         findings.push({
-          ...range,
+          ...source,
           anchor: `lsp:${language}:${diagnostic.source ?? "server"}:${code}:${diagnostic.message}`,
           ruleId: `lsp.${language}.${diagnostic.source ?? "server"}.${code}`,
           ...diagnosticPolicy(diagnostic.severity),

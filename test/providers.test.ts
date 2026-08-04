@@ -61,7 +61,7 @@ test("imports SARIF findings and rejects out-of-project locations", async () => 
   assert.ok(result.skipped.some((item) => /no readable in-project/.test(item.reason)));
 });
 
-test("configured provider failures make the federated scan partial", async () => {
+test("malformed configured provider results make the federated scan partial", async () => {
   const directory = root();
   writeFileSync(path.join(directory, "input.ts"), "const value = 1;\n");
   writeFileSync(path.join(directory, "broken.sarif"), JSON.stringify({
@@ -75,8 +75,8 @@ test("configured provider failures make the federated scan partial", async () =>
   settings.providers.sarif = ["broken.sarif"];
   const result = await scanFiles(directory, ["input.ts"], undefined, "explicit", { config: settings });
   assert.equal(result.completeness?.status, "partial");
-  assert.ok(result.providers.some((provider) => provider.id === "sarif" && provider.status === "failed"));
-  assert.ok(result.skipped.some((item) => item.filePath === "<sarif>"));
+  assert.ok(result.providers.some((provider) => provider.id === "sarif" && provider.status === "completed"));
+  assert.ok(result.skipped.some((item) => item.filePath === "%" && /no readable in-project/.test(item.reason)));
 });
 
 test("normalizes analyzer and coverage reports without applying upstream fixes", async () => {
@@ -97,6 +97,65 @@ test("normalizes analyzer and coverage reports without applying upstream fixes",
   const coverage = result.evidenceRecords.find((item) => item.providerId === "coverage-lcov");
   assert.equal(coverage?.details?.total, 1);
   assert.deepEqual(coverage?.details?.missingLines, [1]);
+});
+
+test("coverage.py invalid line values are skipped without false 0/0 evidence", async () => {
+  const directory = root();
+  writeFileSync(path.join(directory, "valid.py"), "value = 1\n");
+  writeFileSync(path.join(directory, "invalid.py"), "value = 2\n");
+  writeFileSync(
+    path.join(directory, "coverage.json"),
+    JSON.stringify({
+      files: {
+        "valid.py": {
+          executed_lines: [1],
+          missing_lines: [2],
+          summary: { num_statements: 2, covered_lines: 1, percent_covered: 50 },
+        },
+        "invalid.py": { executed_lines: ["not-a-line"], missing_lines: [] },
+      },
+    }),
+  );
+  const settings = config();
+  settings.providers.coverageReports = [{ kind: "coverage-py-json", path: "coverage.json" }];
+  const result = await scanFiles(directory, ["valid.py", "invalid.py"], undefined, "explicit", { config: settings });
+  const valid = result.evidenceRecords.find((item) => item.providerId === "coverage-coverage-py-json" && item.source?.filePath === "valid.py");
+  assert.equal(valid?.details?.total, 2);
+  assert.equal(result.evidenceRecords.some((item) => item.providerId === "coverage-coverage-py-json" && item.source?.filePath === "invalid.py"), false);
+  assert.ok(result.skipped.some((item) => item.filePath === "invalid.py" && /invalid executed_lines/.test(item.reason)));
+  assert.equal(result.completeness?.status, "partial");
+  assert.equal(result.evidenceRecords.some((item) => item.providerId === "coverage-coverage-py-json" && /0\/0/.test(item.summary)), false);
+});
+
+test("coverage.py inconsistent summaries are skipped while valid entries remain evidence", async () => {
+  const directory = root();
+  writeFileSync(path.join(directory, "valid.py"), "value = 1\n");
+  writeFileSync(path.join(directory, "inconsistent.py"), "value = 2\n");
+  writeFileSync(
+    path.join(directory, "coverage.json"),
+    JSON.stringify({
+      files: {
+        "valid.py": {
+          executed_lines: [1],
+          missing_lines: [],
+          summary: { num_statements: 1, covered_lines: 1, percent_covered: 100 },
+        },
+        "inconsistent.py": {
+          executed_lines: [1],
+          missing_lines: [2],
+          summary: { num_statements: 1, covered_lines: 1, percent_covered: 100 },
+        },
+      },
+    }),
+  );
+  const settings = config();
+  settings.providers.coverageReports = [{ kind: "coverage-py-json", path: "coverage.json" }];
+  const result = await scanFiles(directory, ["valid.py", "inconsistent.py"], undefined, "explicit", { config: settings });
+  assert.ok(result.evidenceRecords.some((item) => item.providerId === "coverage-coverage-py-json" && item.source?.filePath === "valid.py"));
+  assert.equal(result.evidenceRecords.some((item) => item.providerId === "coverage-coverage-py-json" && item.source?.filePath === "inconsistent.py"), false);
+  assert.ok(result.skipped.some((item) => item.filePath === "inconsistent.py" && /summary is inconsistent/.test(item.reason)));
+  assert.equal(result.completeness?.status, "partial");
+  assert.equal(result.evidenceRecords.some((item) => item.providerId === "coverage-coverage-py-json" && item.source?.filePath === "inconsistent.py" && /100\.0%/.test(item.summary)), false);
 });
 
 test("dependency provenance remains local and network-off by default", async () => {

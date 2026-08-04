@@ -73,6 +73,7 @@ export async function scanFiles(
   const python = await scanPythonFiles(root, pythonPaths, signal, {
     maxFileBytes: config.limits.maxFileBytes,
     maxOutputBytes: config.limits.maxOutputBytes,
+    commandTimeoutMs: config.limits.commandTimeoutMs,
     maxFindings: config.limits.maxFindings + 1,
   });
   const result = await federateEvidence(root, scanPaths, [typescript.result, python], mode, {

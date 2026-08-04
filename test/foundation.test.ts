@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { loadConfig } from "../src/core/config.ts";
-import { createFinding, createScanResult, isScanResult, scanIdFor } from "../src/core/schema.ts";
+import { createFinding, createScanResult, isScanResult, mergeScanResults, scanIdFor } from "../src/core/schema.ts";
 import { StateStore } from "../src/core/store.ts";
 import { evaluateCorpus, loadCorpus } from "../src/evaluation/corpus.ts";
 import type { FindingDraft } from "../src/types.ts";
@@ -81,6 +81,57 @@ test("scan identity includes every scanned file content hash", () => {
   const second = createScanResult(input);
   assert.notEqual(first.scanId, second.scanId);
   assert.notEqual(first.scope.contentHash, second.scope.contentHash);
+});
+
+test("scan content hashing rejects traversal and external symlink paths", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-containment-root-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-containment-outside-"));
+  const outsideFile = path.join(outside, "outside.ts");
+  const linkPath = path.join(root, "linked.ts");
+  writeFileSync(path.join(root, "inside.ts"), "const inside = 1;\n");
+  writeFileSync(outsideFile, "const outside = 1;\n");
+  symlinkSync(outsideFile, linkPath);
+  const traversalPath = path.relative(root, outsideFile);
+  const input = {
+    engine: "semantic-review" as const,
+    engineVersion: "test",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["inside.ts", "linked.ts", traversalPath],
+    findings: [],
+    skipped: [],
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  const first = createScanResult(input);
+  const mergedFirst = mergeScanResults(root, [first]);
+  writeFileSync(outsideFile, "const outside = 2;\n");
+  const second = createScanResult(input);
+  const mergedSecond = mergeScanResults(root, [second]);
+
+  assert.deepEqual(first.scannedFiles, [traversalPath, "inside.ts", "linked.ts"].sort());
+  assert.equal(first.scope.contentHash, second.scope.contentHash);
+  assert.equal(mergedFirst.scope.contentHash, mergedSecond.scope.contentHash);
+  writeFileSync(path.join(root, "inside.ts"), "const inside = 2;\n");
+  const changed = createScanResult(input);
+  assert.notEqual(second.scope.contentHash, changed.scope.contentHash);
+});
+
+test("scan canonicalization retains lexical paths for missing files", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-containment-missing-"));
+  const result = createScanResult({
+    engine: "semantic-review",
+    engineVersion: "test",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["missing.ts", "nested/also-missing.ts"],
+    findings: [],
+    skipped: [{ filePath: "missing.ts", reason: "not found" }],
+  });
+  assert.deepEqual(result.scannedFiles, ["missing.ts", "nested/also-missing.ts"]);
+  assert.equal(result.skipped[0]?.filePath, "missing.ts");
 });
 
 test("scan result validation rejects malformed nested records", () => {

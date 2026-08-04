@@ -3,12 +3,14 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
   if (value !== null && typeof value === "object") {
     const record = value as Record<string, unknown>;
     return `{${Object.entries(record)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
       .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
       .join(",")}}`;
   }
@@ -17,7 +19,7 @@ function stableJson(value: unknown): string {
 
 function hashEntries(entries: Array<{ name: string; content: Buffer | string }>): string {
   const hash = createHash("sha256");
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+  for (const entry of entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)) {
     hash.update(entry.name);
     hash.update("\0");
     hash.update(entry.content);
@@ -29,7 +31,7 @@ function hashEntries(entries: Array<{ name: string; content: Buffer | string }>)
 function sourceFiles(root: string): string[] {
   const files: string[] = [];
   const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)) {
       if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "artifacts") continue;
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) visit(absolute);
@@ -43,7 +45,7 @@ function sourceFiles(root: string): string[] {
 function directoryFiles(root: string): string[] {
   const files: string[] = [];
   const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)) {
       if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "artifacts") continue;
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) visit(absolute);

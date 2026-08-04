@@ -18,6 +18,7 @@ interface PythonHelperResult {
 export interface PythonScanOptions {
   maxFileBytes?: number;
   maxOutputBytes?: number;
+  commandTimeoutMs?: number;
   maxFindings?: number;
 }
 function validateHelperResult(rootDir: string, requestedPaths: string[], value: unknown): PythonHelperResult {
@@ -98,7 +99,7 @@ export async function scanPythonFiles(rootDir: string, paths: string[], signal?:
           {
             encoding: "utf8",
             maxBuffer: options.maxOutputBytes ?? 5 * 1024 * 1024,
-            timeout: 30_000,
+            timeout: options.commandTimeoutMs ?? 120_000,
             signal,
             env: { ...process.env, PI_AI_SLOP_MAX_FILE_BYTES: String(options.maxFileBytes ?? 1024 * 1024) },
           },

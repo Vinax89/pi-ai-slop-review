@@ -5,13 +5,14 @@ import path from "node:path";
 import test from "node:test";
 
 import { DEFAULT_CONFIG, loadConfig, redactConfig } from "../src/core/config.ts";
+import { diffScans } from "../src/core/ledger.ts";
 import { discoverRepositoryFiles } from "../src/core/discovery.ts";
 import { createScanResult, isScanResult } from "../src/core/schema.ts";
 import { StateStore } from "../src/core/store.ts";
 import { diagnose, redactSensitive } from "../src/diagnostics.ts";
 import { toMarkdown, toSarif, writeExport } from "../src/export.ts";
 import { importSarif } from "../src/providers/sarif.ts";
-import { formatReport } from "../src/report.ts";
+import { formatDelta, formatReport, formatTriage } from "../src/report.ts";
 import type { FindingDraft } from "../src/types.ts";
 
 function fixture(): string {
@@ -88,6 +89,28 @@ test("JSON and SARIF exports are schema-shaped, atomic, and SARIF-importable", (
   assert.doesNotThrow(() => JSON.parse(readFileSync(new URL("../schema/scan-result.schema.json", import.meta.url), "utf8")));
   assert.doesNotThrow(() => JSON.parse(readFileSync(new URL("../schema/config.schema.json", import.meta.url), "utf8")));
 });
+
+test("failed export serialization removes the process temp file for retry", () => {
+  const root = fixture();
+  const result = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [],
+    skipped: [],
+  });
+  const requestedPath = "reports/retry.json";
+  const temporaryPath = path.join(root, `${requestedPath}.${process.pid}.tmp`);
+  const malformed = { ...result, generatedAt: 1n as unknown as string };
+
+  assert.throws(() => writeExport(root, malformed, "json", requestedPath));
+  assert.equal(existsSync(temporaryPath), false);
+  assert.equal(writeExport(root, result, "json", requestedPath), path.join(root, requestedPath));
+});
+
 
 test("scan completeness distinguishes complete, partial, and abstained outcomes", () => {
   const root = fixture();
@@ -224,6 +247,82 @@ test("Markdown reports rank findings by weighted severity and retain review evid
   const text = formatReport(result);
   assert.ok(text.indexOf("data.hidden-catch-fallback") < text.indexOf("test.low"));
   assert.match(text, /CRITICAL 99\/100 C3 data\.hidden-catch-fallback/);
+});
+
+test("human-facing reports expose a plain-language decision summary", () => {
+  const result = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: fixture(),
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [{ ...finding(), maximumAction: "observe", message: "Review this forwarding path" }],
+    evidenceRecords: [],
+    skipped: [],
+  });
+  const report = formatReport(result);
+  const triage = formatTriage(result);
+  assert.match(report, /Human decision required:/);
+  assert.match(report, /Supporting evidence:/);
+  assert.match(report, /Human must decide whether the evidence justifies any change/);
+  assert.match(triage, /Summary: 1 observe/);
+  assert.match(triage, /Human review action: observe/);
+});
+
+test("intent-aware triage keeps uncertainty visible and avoids removal claims", () => {
+  const root = fixture();
+  const result = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [
+      { ...finding(), confidence: "C1", risk: "R1", maximumAction: "observe", counterEvidence: ["local convention may require this"], unknown: ["runtime intent"] },
+      { ...finding(), anchor: "critical", confidence: "C3", risk: "R3", maximumAction: "propose", message: "Security-sensitive finding" },
+    ],
+    evidenceRecords: [{
+      schemaVersion: 1,
+      id: "context-evidence",
+      providerId: "repository-graph",
+      providerVersion: "1",
+      kind: "reference",
+      summary: "repository impact for exported symbol",
+      strength: "C2",
+      source: { filePath: "input.ts", line: 1, column: 1, start: 0, end: 5, sourceHash: "hash" },
+      details: { callers: ["caller-1"], tests: ["test-1"], governingSpecifications: ["spec-1"] },
+    }],
+    skipped: [],
+  });
+  const triage = formatTriage(result);
+  assert.match(triage, /Findings are evidence for human review, not proof that code is useless or removable/);
+  assert.match(triage, /Evidence is incomplete or contested/);
+  assert.match(triage, /Human review required; do not infer that this code is removable/);
+  assert.match(triage, /Context signals inform triage only; they do not prove intent or authorize code removal/);
+  assert.match(triage, /callers=1 tests=1 specifications=1 coverage=0/);
+});
+
+test("baseline deltas identify risk escalations as regression candidates", () => {
+  const root = fixture();
+  const baseline = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [finding()],
+    skipped: [],
+  });
+  const current = {
+    ...baseline,
+    findings: [{ ...baseline.findings[0], risk: "R3" as const }],
+  };
+  const delta = diffScans(current, baseline);
+  assert.equal(delta.changed.length, 1);
+  assert.match(formatDelta(delta), /regression candidate/);
 });
 
 test("exports reject symlink escapes and default to private extension state", () => {

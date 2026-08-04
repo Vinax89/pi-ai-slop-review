@@ -46,11 +46,11 @@ function artifactPath(run: SarifRun, location: SarifLocation): string | undefine
   const artifact = location.physicalLocation?.artifactLocation;
   if (!artifact?.uri) return undefined;
   const base = artifact.uriBaseId ? run.originalUriBaseIds?.[artifact.uriBaseId]?.uri : undefined;
-  if (!base) return decodeURIComponent(artifact.uri);
   try {
+    if (!base) return decodeURIComponent(artifact.uri);
     return decodeURIComponent(new URL(artifact.uri, base).toString());
   } catch {
-    return path.join(base, artifact.uri);
+    return base ? path.join(base, artifact.uri) : artifact.uri;
   }
 }
 
