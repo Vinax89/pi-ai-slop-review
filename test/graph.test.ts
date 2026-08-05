@@ -54,6 +54,9 @@ test("repository graph links symbols, calls, tests, specifications, public surfa
   const impact = result.evidenceRecords.find((item) => item.summary.includes("exported 'load'"));
   assert.equal((impact?.details?.tests as unknown[])?.length, 1);
   assert.equal((impact?.details?.governingSpecifications as unknown[])?.length, 1);
+  assert.deepEqual(impact?.details?.testFiles, ["tests/service.test.ts"]);
+  assert.deepEqual(impact?.details?.specificationFiles, ["docs/spec.md"]);
+  assert.ok((impact?.details?.callerLocations as string[])?.some((item) => item.startsWith("tests/service.test.ts:")));
 
   const store = new GraphStore(root, state);
   const stats = store.statistics();

@@ -21,7 +21,7 @@ pi -e npm:pi-ai-slop-review
 A version-tagged Git installation is also supported:
 
 ```bash
-pi install git:github.com/Vinax89/pi-ai-slop-review@v1.2.4
+pi install git:github.com/Vinax89/pi-ai-slop-review@v1.2.5
 ```
 
 Pi packages execute code with the user's privileges. Review the source and [`docs/security.md`](docs/security.md) before installation.
@@ -31,7 +31,7 @@ Pi packages execute code with the user's privileges. Review the source and [`doc
 - `/slop-review` reviews files changed through tracked `edit`, `write`, or `ctx_edit` calls in the current Pi session.
 - `/slop-review src/a.ts src/b.ts` reviews explicit project-relative files.
 - `/slop-audit` explicitly runs repository-wide review of up to 10,000 supported files by default; native TypeScript scans and repository-graph extraction use programs bounded to 250 files and 4 MiB of root source, and Python graph helpers retry oversized output in smaller bounded batches.
-- Every review or audit runs in a reusable isolated child process with a 384 MiB old-generation limit; streamed content hashes identify unchanged requests without a second result copy, garbage collection runs only under heap pressure, and recycled processes reuse Node's native compile cache. Results report `complete`, `partial`, or `abstained`; process failure or memory-limit exit becomes `abstained` instead of terminating Pi. A weighted-severity Markdown report with evidence, possible remediation, and suggested verification is written to private extension state.
+- Every review or audit runs in a reusable isolated child process with a 384 MiB old-generation limit; streamed content hashes identify unchanged requests without a second result copy, garbage collection runs only under heap pressure, and recycled processes reuse Node's native compile cache. Results report `complete`, `partial`, or `abstained`; process failure or memory-limit exit becomes `abstained` instead of terminating Pi. The private Markdown report is a human decision report: compact tables summarize workload, dispositions, hotspots, and health; a family decision queue names missing evidence and the next investigation; and one source-backed detail section per family provides exact feedback commands plus remediation and verification gated behind acceptance. Linked tests, callers, and specifications are named when available. The complete candidate set remains available through `/slop-findings`, JSON, and SARIF.
 - `/slop-findings` opens the TUI finding picker; a finding ID prefix opens it directly.
 - `/slop-triage` summarizes evidence, counterevidence, uncertainty, and human-review guidance; findings are never treated as proof that code is removable.
 - `/slop-timeline` shows content-hash-valid mutations and verification freshness.

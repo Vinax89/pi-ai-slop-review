@@ -42,7 +42,7 @@ export function formatTriage(result: ScanResult, maxFindings = 100): string {
     const context = assessment.context;
     const dimensions = assessment.dimensions.filter((item) => item.status !== "unknown");
     lines.push(
-      `${item.finding.id.slice(-8)} ${item.severity.toUpperCase()} ${item.finding.ruleId} ${item.finding.filePath}:${item.finding.line}`,
+      `${item.finding.id.slice(-8)} REVIEW PRIORITY ${item.score}/100 ${item.finding.ruleId} ${item.finding.filePath}:${item.finding.line}`,
       `  Decision: ${action} (advisory; human approval required)`,
       `  Human review action: ${action}`,
       `  Evidence: ${item.finding.evidence.length} supporting, ${item.finding.counterEvidence.length} counterevidence, ${item.finding.unknown.length} unknown`,
@@ -57,7 +57,7 @@ export function formatTriage(result: ScanResult, maxFindings = 100): string {
 
 function formatFinding(item: RankedFinding, result: ScanResult): string {
   const { finding } = item;
-  const header = `${item.severity.toUpperCase()} ${item.score}/100 ${finding.confidence} ${finding.ruleId} ${finding.filePath}:${finding.line}:${finding.column}`;
+  const header = `REVIEW PRIORITY ${item.score}/100 ${finding.confidence} ${finding.ruleId} ${finding.filePath}:${finding.line}:${finding.column}`;
   const assessment = assessIntent(finding, result);
   const context = assessment.context;
   const dimensions = assessment.dimensions.filter((item) => item.status !== "unknown");
@@ -97,7 +97,7 @@ export function formatReport(result: ScanResult, maxFindings = 100): string {
     `Scan: ${result.scanId} (${result.scope.mode}, ${result.scope.contentHash.slice(0, 12)})`,
   ];
   if (completeness.reasons.length) lines.push(`Completeness: ${completeness.reasons.join("; ")}`);
-  if (shown.length) lines.push("", "FINDINGS — highest weighted risk first", "", ...shown.map((item) => formatFinding(item, result)));
+  if (shown.length) lines.push("", "FINDINGS — highest review priority first", "", ...shown.map((item) => formatFinding(item, result)));
   if (result.findings.length > shown.length) lines.push("", `${result.findings.length - shown.length} finding(s) omitted; increase the display limit to inspect them`);
   if (result.policyDecisions.some((decision) => decision.reasons.length)) {
     lines.push(

@@ -7,7 +7,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG, loadConfig, redactConfig } from "../src/core/config.ts";
 import { diffScans } from "../src/core/ledger.ts";
 import { discoverRepositoryFiles } from "../src/core/discovery.ts";
-import { createScanResult, isScanResult } from "../src/core/schema.ts";
+import { createScanResult, isScanResult, sha256 } from "../src/core/schema.ts";
 import { StateStore } from "../src/core/store.ts";
 import { diagnose, redactSensitive } from "../src/diagnostics.ts";
 import { toMarkdown, toSarif, writeExport } from "../src/export.ts";
@@ -86,7 +86,7 @@ test("JSON and SARIF exports are schema-shaped, atomic, and SARIF-importable", (
   assert.equal(sarif.runs[0].results.length, 1);
   const sarifPath = writeExport(root, result, "sarif", "reports/result.sarif.json");
   const markdownPath = writeExport(root, result, "markdown", "reports/findings.md");
-  assert.match(readFileSync(markdownPath, "utf8"), /# AI-Slop Findings Report/);
+  assert.match(readFileSync(markdownPath, "utf8"), /# AI-Slop Review — Human Decision Report/);
   const imported = importSarif(root, [path.relative(root, sarifPath)]);
   assert.equal(imported.findings.length, 1);
   assert.match(imported.findings[0].ruleId, /test\.rule/);
@@ -193,28 +193,47 @@ test("truncated repository audits persist and export partial completeness", () =
   assert.match(toMarkdown(truncated), /must not be interpreted as a clean scan/);
 });
 
-test("Markdown reports rank findings by weighted severity and retain review evidence", () => {
+test("Markdown reports are compact, action-aware, and grounded in linked verification", () => {
   const root = fixture();
+  const sourceHash = sha256("const value = 1;\n");
   const result = createScanResult({
     engine: "provider-federation",
     engineVersion: "1",
     rootDir: root,
     providerId: "test",
     providerVersion: "1",
+    evidenceRecords: [{
+      schemaVersion: 1,
+      id: "graph-context",
+      providerId: "repository-graph",
+      providerVersion: "1",
+      kind: "reference",
+      summary: "repository impact",
+      strength: "C2",
+      source: { filePath: "input.ts", line: 1, column: 1, start: 0, end: 5, sourceHash },
+      details: {
+        callerLocations: ["src/caller.ts:loadInput"],
+        testFiles: ["tests/input.test.ts"],
+        specificationFiles: ["docs/input.md"],
+      },
+    }],
     scannedFiles: ["input.ts"],
     findings: [
       {
         ...finding(),
         anchor: "low",
-        ruleId: "test.low",
+        sourceHash,
+        ruleId: "structure.pass-through-wrapper",
         confidence: "C1",
         risk: "R1",
+        maximumAction: "propose",
         message: "Low [link](javascript:alert(1)) *priority* <script>",
         evidence: ["low evidence"],
       },
       {
         ...finding(),
         anchor: "critical",
+        sourceHash,
         ruleId: "data.hidden-catch-fallback",
         confidence: "C3",
         risk: "R3",
@@ -222,6 +241,16 @@ test("Markdown reports rank findings by weighted severity and retain review evid
         evidence: ["strong evidence"],
         counterEvidence: ["review this caveat"],
         unknown: ["runtime behavior"],
+      },
+      {
+        ...finding(),
+        anchor: "critical-copy",
+        sourceHash,
+        ruleId: "data.hidden-catch-fallback",
+        confidence: "C2",
+        risk: "R2",
+        message: "Duplicate family detail should stay collapsed",
+        evidence: ["duplicate evidence"],
       },
     ],
     skipped: [],
@@ -232,25 +261,42 @@ test("Markdown reports rank findings by weighted severity and retain review evid
     finalConfidence: item.confidence,
     originalAction: item.maximumAction,
     finalAction: item.maximumAction,
-    evidenceScore: item.ruleId === "data.hidden-catch-fallback" ? 0.95 : 0.4,
+    evidenceScore: item.anchor === "critical" ? 0.95 : 0.4,
     reasons: ["deterministic policy note"],
   }));
-  const markdown = toMarkdown(result);
-  assert.ok(markdown.indexOf("data.hidden-catch-fallback") < markdown.indexOf("test.low"));
-  assert.match(markdown, /Critical Findings \(1\)/);
-  assert.match(markdown, /Low Findings \(1\)/);
-  assert.match(markdown, /60% risk \+ 25% confidence \+ 15% policy evidence/);
+  const markdown = toMarkdown(result, root);
+  assert.ok(markdown.indexOf("data.hidden-catch-fallback") < markdown.indexOf("structure.pass-through-wrapper"));
+  assert.match(markdown, /# AI-Slop Review — Human Decision Report/);
+  assert.match(markdown, /\| Decisions required \| 2 \|/);
+  assert.match(markdown, /\| Policy proposals \| 1 \|/);
+  assert.match(markdown, /## Human Decision Summary/);
+  assert.match(markdown, /## Decision Queue[\s\S]*\| # \| Finding family \| Candidates \| Priority \| Current disposition \| Missing evidence \| Next action \|/);
+  assert.match(markdown, /\| 1 \| data\.hidden-catch-fallback \| 2 \| 99\/100 \| Observe \(2\) \| runtime behavior \| Trace consumers/);
+  assert.match(markdown, /\| 2 \| structure\.pass-through-wrapper \| 1 \| 34\/100 \| Propose \(1\) \| Whether the reported behavior violates the local contract \| Inspect all callers/);
+  assert.equal((markdown.match(/## Decision Outcomes/g) ?? []).length, 1);
+  assert.match(markdown, /## Family Decisions/);
+  assert.match(markdown, /### Decision 1 of 2 — data\.hidden-catch-fallback/);
+  assert.doesNotMatch(markdown, /## Start Here|## Findings by Family|## Finding Family Playbooks|## Representative Finding Details|## All Returned Candidates/);
+  assert.doesNotMatch(markdown, /Critical-priority/);
+  assert.match(markdown, /\| Review priority \| 99\/100 \|/);
   assert.match(markdown, /#### Counterevidence[\s\S]*review this caveat/);
-  assert.match(markdown, /#### Unknowns[\s\S]*runtime behavior/);
+  assert.match(markdown, /#### Decision Needed[\s\S]*> runtime behavior/);
+  assert.match(markdown, /#### Missing Evidence[\s\S]*No additional evidence gaps were identified beyond the decision question/);
+  assert.match(markdown, /#### Next Investigation[\s\S]*\/slop-context input\.ts[\s\S]*tests\/input\.test\.ts[\s\S]*src\/caller\.ts:loadInput[\s\S]*docs\/input\.md/);
   assert.match(markdown, /#### Policy Notes[\s\S]*deterministic policy note/);
-  assert.match(markdown, /#### Possible Remediation[\s\S]*safe-looking fallback/);
-  assert.match(markdown, /current policy does not authorize an automatic patch/);
-  assert.match(markdown, /#### Suggested Verification[\s\S]*failure path/);
+  assert.match(markdown, /#### Record the Decision[\s\S]*\/slop-feedback finding:[a-f0-9]+ accepted <reason>[\s\S]*intentional <reason>[\s\S]*missing-context <reason>[\s\S]*insufficient-evidence <reason>/);
+  assert.match(markdown, /#### Only If Accepted[\s\S]*\*\*Possible remediation\*\*[\s\S]*safe-looking fallback[\s\S]*\*\*Required verification\*\*[\s\S]*tests\/input\.test\.ts/);
+  assert.match(markdown, /#### Representative Source[\s\S]*> 1 \| const value = 1;/);
+  assert.equal((markdown.match(/#### Representative Source/g) ?? []).length, 2);
+  assert.match(markdown, /\*\*Other occurrences:\*\* 1/);
+  assert.doesNotMatch(markdown, /Duplicate family detail should stay collapsed/);
+  assert.match(markdown, /\*\*Summary:\*\* 1 completed, 0 degraded, 0 failed, 0 skipped/);
+  assert.doesNotMatch(markdown, /\| Provider \| Status \|/);
   assert.ok(markdown.includes("Low \\[link\\](javascript:alert(1)) \\*priority\\* &lt;script&gt;"));
   assert.doesNotMatch(markdown, /<script>/);
   const text = formatReport(result);
-  assert.ok(text.indexOf("data.hidden-catch-fallback") < text.indexOf("test.low"));
-  assert.match(text, /CRITICAL 99\/100 C3 data\.hidden-catch-fallback/);
+  assert.ok(text.indexOf("data.hidden-catch-fallback") < text.indexOf("structure.pass-through-wrapper"));
+  assert.match(text, /REVIEW PRIORITY 99\/100 C3 data\.hidden-catch-fallback/);
 });
 
 test("human-facing reports expose a plain-language decision summary", () => {

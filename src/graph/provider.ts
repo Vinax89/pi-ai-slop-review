@@ -183,11 +183,17 @@ export async function collectGraphEvidence(
         const callerEdges = store.incomingEdges(node.id, 101, "calls");
         const testEdges = store.incomingEdges(node.id, 101, "covers");
         const governingEdges = store.incomingEdges(nodeIdForFile(node.filePath), 101, "governs");
+        const callers = callerEdges.slice(0, 100).flatMap((item) => store.node(item.fromId) ?? []);
+        const tests = testEdges.slice(0, 100).flatMap((item) => store.node(item.fromId) ?? []);
+        const specifications = governingEdges.slice(0, 100).flatMap((item) => store.node(item.fromId) ?? []);
         if (evidenceRecords.length < config.limits.maxFindings) {
           const impact = evidenceForNode(rootDir, node, `repository impact for exported '${node.qualifiedName}'`, "reference", {
             callers: callerEdges.slice(0, 100).map((item) => item.fromId),
             tests: testEdges.slice(0, 100).map((item) => item.fromId),
             governingSpecifications: governingEdges.slice(0, 100).map((item) => item.fromId),
+            callerLocations: callers.map((item) => `${item.filePath}:${item.qualifiedName}`),
+            testFiles: [...new Set(tests.map((item) => item.filePath))],
+            specificationFiles: [...new Set(specifications.map((item) => item.filePath))],
             truncated: callerEdges.length > 100 || testEdges.length > 100 || governingEdges.length > 100,
           });
           if (impact) evidenceRecords.push(impact);
