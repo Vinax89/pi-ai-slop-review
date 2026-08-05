@@ -151,33 +151,44 @@ export async function collectGraphEvidence(
     reviewed: for (const page of store.nodePagesForFiles(reviewedFiles)) {
       for (const node of page) {
         if (findings.length >= config.limits.maxFindings) break reviewed;
-      if (node.bodyHash && ["function", "class"].includes(node.kind)) {
-        const cloneGroup = `${node.kind}:${node.bodyHash}`;
-        if (!reportedCloneGroups.has(cloneGroup)) {
-          const cloneCount = store.cloneCount(node.bodyHash, node.kind);
-          if (cloneCount > 1) {
-            reportedCloneGroups.add(cloneGroup);
-            const examples = store.clones(node.bodyHash, node.kind)
-              .filter((candidate) => candidate.id !== node.id)
-              .slice(0, 5)
-              .map((item) => `${item.filePath}:${item.qualifiedName}`);
-            const omitted = Math.max(0, cloneCount - 1 - examples.length);
-            const finding = findingForNode(rootDir, node, {
-              anchor: `duplicate:${cloneGroup}`,
-              ruleId: "structure.duplicate-capability",
-              classification: "waste_candidate",
-              confidence: "C1",
-              risk: "R2",
-              maximumAction: "observe",
-              message: `'${node.qualifiedName}' has an exact normalized body match in ${cloneCount - 1} other location(s): ${examples.join(", ")}${omitted ? ` (+${omitted} more)` : ""}`,
-              evidence: ["repository graph found identical normalized function/class body hashes"],
-              counterEvidence: [],
-              unknown: ["duplicate bodies may intentionally implement separate contracts or boundaries"],
-            });
-            if (finding) findings.push(finding);
+        if (node.bodyHash && ["function", "class"].includes(node.kind) &&
+          !/(?:^|\/)(?:tests?|alembic\/versions|migrations)(?:\/|$)/.test(node.filePath)) {
+          const cloneGroup = `${node.kind}:${node.bodyHash}`;
+          if (!reportedCloneGroups.has(cloneGroup)) {
+            const clones = store.clones(node.bodyHash, node.kind, config.limits.maxFindings + 1).filter(
+              (candidate) => !/(?:^|\/)(?:tests?|alembic\/versions|migrations)(?:\/|$)/.test(candidate.filePath),
+            );
+            const signature = node.signature?.slice(node.signature.indexOf("("));
+            const compatibleSignatures = node.kind !== "function" || clones.every(
+              (candidate) => candidate.signature?.slice(candidate.signature.indexOf("(")) === signature,
+            );
+            const simpleName = node.qualifiedName.split(".").at(-1);
+            const sameLocalContract = clones.every((candidate) =>
+              candidate.qualifiedName.split(".").at(-1) === simpleName &&
+              (candidate.filePath === node.filePath || simpleName?.startsWith("_")));
+            if (clones.length > 1 && !sameLocalContract && compatibleSignatures) {
+              reportedCloneGroups.add(cloneGroup);
+              const examples = clones
+                .filter((candidate) => candidate.id !== node.id)
+                .slice(0, 5)
+                .map((item) => `${item.filePath}:${item.qualifiedName}`);
+              const omitted = Math.max(0, clones.length - 1 - examples.length);
+              const finding = findingForNode(rootDir, node, {
+                anchor: `duplicate:${cloneGroup}`,
+                ruleId: "structure.duplicate-capability",
+                classification: "waste_candidate",
+                confidence: "C1",
+                risk: "R2",
+                maximumAction: "observe",
+                message: `'${node.qualifiedName}' has an exact normalized body match in ${clones.length - 1} other location(s): ${examples.join(", ")}${omitted ? ` (+${omitted} more)` : ""}`,
+                evidence: ["repository graph found identical normalized function/class body hashes"],
+                counterEvidence: [],
+                unknown: ["duplicate bodies may intentionally implement separate contracts or boundaries"],
+              });
+              if (finding) findings.push(finding);
+            }
           }
         }
-      }
 
       if (node.exported && ["function", "class", "variable"].includes(node.kind) && (evidenceRecords.length < config.limits.maxFindings || mode !== "repository")) {
         const callerEdges = store.incomingEdges(node.id, 101, "calls");

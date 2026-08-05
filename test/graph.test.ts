@@ -36,8 +36,8 @@ function fixture(): { root: string; state: string; config: AiSlopConfig } {
 
 test("repository graph links symbols, calls, tests, specifications, public surfaces, clones, frameworks, and architecture", async () => {
   const { root, state, config } = fixture();
-  writeFileSync(path.join(root, "src/service.ts"), "export function load(value: number) { return value + 1; }\n");
-  writeFileSync(path.join(root, "src/clone.ts"), "function increment(value: number) { return value + 1; }\nvoid increment(1);\n");
+  writeFileSync(path.join(root, "src/service.ts"), "export function load(value: number) { const adjusted = value + 1; return adjusted * 2; }\n");
+  writeFileSync(path.join(root, "src/clone.ts"), "function increment(value: number) { const adjusted = value + 1; return adjusted * 2; }\nvoid increment(1);\n");
   writeFileSync(path.join(root, "tests/service.test.ts"), "import { load } from '../src/service.js';\nexport function testLoad() { return load(1); }\n");
   writeFileSync(path.join(root, "server/api.ts"), "export function api() { return 1; }\n");
   writeFileSync(path.join(root, "client/use-api.ts"), "import { api } from '../server/api.js';\nexport const GET = () => api();\n");
@@ -183,9 +183,22 @@ test("repository graph summarizes duplicate groups once with bounded examples", 
   const { root, state, config } = fixture();
   const paths = Array.from({ length: 8 }, (_, index) => `src/clone-${index}.ts`);
   for (const [index, filePath] of paths.entries()) {
-    writeFileSync(path.join(root, filePath), `export function clone${index}(value: number) { return value + 1; }\n`);
+    writeFileSync(path.join(root, filePath), `export function clone${index}(value: number) { const adjusted = value + 1; return adjusted * 2; }\n`);
   }
-  const result = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
+  const ignoredPaths = ["tests/clone-a.ts", "tests/clone-b.ts", "backend/alembic/versions/0001_a.py", "backend/alembic/versions/0002_b.py"];
+  for (const filePath of ignoredPaths) {
+    mkdirSync(path.dirname(path.join(root, filePath)), { recursive: true });
+    writeFileSync(path.join(root, filePath), filePath.endsWith(".py")
+      ? "def repair(value):\n    adjusted = value + 1\n    return adjusted * 2\n"
+      : "export function helper(value: number) { const adjusted = value + 1; return adjusted * 2; }\n");
+  }
+  const contractPath = "src/contracts.ts";
+  writeFileSync(path.join(root, contractPath), "export class A { run(value: number) { const offset = value + 19; return offset * 23; } }\nexport class B { run(value: number) { const offset = value + 19; return offset * 23; } }\n");
+  const localPaths = ["src/local-a.ts", "src/local-b.ts"];
+  for (const filePath of localPaths) {
+    writeFileSync(path.join(root, filePath), "function _local(value: number) { const offset = value + 29; return offset * 31; }\n");
+  }
+  const result = await collectGraphEvidence(root, [...paths, ...ignoredPaths, contractPath, ...localPaths], config, undefined, state, "repository");
   const duplicates = result.findings.filter((item) => item.ruleId === "structure.duplicate-capability");
   assert.equal(duplicates.length, 1);
   assert.match(duplicates[0].message, /7 other location\(s\)/);
@@ -197,11 +210,12 @@ test("Python graph remains isolated while capturing exports, calls, tests, impor
   const { root, state, config } = fixture();
   writeFileSync(
     path.join(root, "service.py"),
-    "from fastapi import FastAPI\napp = FastAPI()\n\ndef helper(value):\n    return value + 1\n\n@app.get('/value')\ndef get_value():\n    return helper(1)\n\ndef test_value():\n    return get_value()\n",
+    "from fastapi import FastAPI\napp = FastAPI()\n\ndef helper(value):\n    return value + 1\n\ndef marker_one():\n    pass\n\ndef marker_two():\n    pass\n\n@app.get('/value')\ndef get_value():\n    return helper(1)\n\ndef test_value():\n    return get_value()\n",
   );
   const result = await collectGraphEvidence(root, ["service.py"], config, undefined, state);
   assert.equal(result.skipped.length, 0);
   assert.ok(result.evidenceRecords.some((item) => item.summary.includes("framework or runtime registration")));
+  assert.equal(result.findings.some((item) => item.ruleId === "structure.duplicate-capability"), false);
   const store = new GraphStore(root, state);
   assert.ok(store.findByName("helper").length);
   assert.ok(store.edges("service.py").some((edge) => edge.kind === "imports"));

@@ -437,7 +437,7 @@ function scanCatchClauses(sourceFile: ts.SourceFile, sourceHash: string, root: s
             ruleId: "errors.suppressed",
             classification: "context_conflict",
             confidence: "C2",
-            risk: "R2",
+            risk: logOnly ? "R2" : "R3",
             maximumAction: "observe",
             message: logOnly ? "Catch clause only logs before control continues" : "Catch clause is empty",
             evidence: [logOnly ? "all catch statements are logger-like calls" : "catch body has no executable statements"],
@@ -467,10 +467,10 @@ function scanImports(project: Project, sourceFile: ts.SourceFile, sourceHash: st
     if (specifier) {
       const spec = specifier.text;
       const isRuntimeBuiltin = BUILTINS.has(spec) || /^(?:https?|bun|deno):/.test(spec);
+      const isExistingRelativeResource = spec.startsWith(".") && existsSync(path.resolve(path.dirname(sourceFile.fileName), spec));
       const symbol = canonicalSymbol(project.checker, project.checker.getSymbolAtLocation(specifier));
-      const resolved = isRuntimeBuiltin
-        ? true
-        : Boolean(ts.resolveModuleName(spec, sourceFile.fileName, project.options, ts.sys).resolvedModule || symbol);
+      const resolved = isRuntimeBuiltin || isExistingRelativeResource ||
+        Boolean(ts.resolveModuleName(spec, sourceFile.fileName, project.options, ts.sys).resolvedModule || symbol);
       if (!resolved) {
         const location = nodeLocation(sourceFile, specifier);
         const compilerConfirms = semanticDiagnostics.some(

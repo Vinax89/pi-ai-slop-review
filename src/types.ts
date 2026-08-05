@@ -165,6 +165,7 @@ export interface FeedbackRecord {
   schemaVersion: SchemaVersion;
   id: string;
   findingId: string;
+  sourceHash?: string;
   ruleId: string;
   outcome:
     | "accepted"

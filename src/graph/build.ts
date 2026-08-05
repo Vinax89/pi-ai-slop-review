@@ -110,6 +110,9 @@ function declarationBody(node: ts.Node): ts.Node | undefined {
 function bodyHash(node: ts.Node): string | undefined {
   const body = declarationBody(node);
   if (!body) return undefined;
+  if (ts.isBlock(body) && body.statements.length < 2) return undefined;
+  if (ts.isClassDeclaration(body) && body.members.length < 2) return undefined;
+  if (!ts.isBlock(body) && !ts.isClassDeclaration(body)) return undefined;
   return sha256(body.getText().replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "").replace(/\s+/g, " ").trim());
 }
 

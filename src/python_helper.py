@@ -14,8 +14,18 @@ from typing import Any
 
 MAX_FILE_BYTES = int(os.environ.get("PI_AI_SLOP_MAX_FILE_BYTES", str(1024 * 1024)))
 LOG_METHODS = {"debug", "error", "exception", "info", "log", "trace", "warn", "warning"}
-OPTIONAL_IMPORT_ERRORS = {"ImportError", "ModuleNotFoundError"}
+OPTIONAL_IMPORT_ERRORS = {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
 DEPENDENCY_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
+KNOWN_DISTRIBUTIONS = {
+    "jwt": {"pyjwt"},
+    "yaml": {"pyyaml"},
+    "PIL": {"pillow"},
+    "cv2": {"opencv-python", "opencv-python-headless"},
+    "bs4": {"beautifulsoup4"},
+    "google": {"google-auth", "google-api-core", "google-api-python-client", "googleapis-common-protos"},
+    "googleapiclient": {"google-api-python-client"},
+    "opentelemetry": {"opentelemetry-api", "opentelemetry-sdk"},
+}
 sys.dont_write_bytecode = True
 
 _COMMON_SPEC = importlib.util.spec_from_file_location("_pi_ai_slop_python_common", Path(__file__).with_name("python_common.py"))
@@ -150,9 +160,8 @@ def platform_conditional(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool
             return True
     return False
 
-
 def project_roots(root: Path, file_path: Path) -> list[Path]:
-    roots = {root, root / "src"}
+    roots = {root, root / "src", file_path.parent}
     current = file_path.parent
     while is_inside(root, current):
         if any((current / marker).exists() for marker in ("pyproject.toml", "setup.cfg", "setup.py", "requirements.txt")):
@@ -160,6 +169,9 @@ def project_roots(root: Path, file_path: Path) -> list[Path]:
         if current == root:
             break
         current = current.parent
+    for child in root.iterdir():
+        if child.is_dir() and any((child / marker).exists() for marker in ("pyproject.toml", "setup.cfg", "setup.py", "requirements.txt")):
+            roots.update({child, child / "src"})
     for environment in (root / ".venv", root / "venv"):
         roots.update(environment.glob("lib/python*/site-packages"))
         roots.add(environment / "Lib" / "site-packages")
@@ -206,8 +218,7 @@ def declared_dependencies(root: Path, file_path: Path) -> set[str]:
             project = document.get("project", {})
             groups = [project.get("dependencies", [])]
             groups.extend(project.get("optional-dependencies", {}).values())
-            poetry = document.get("tool", {}).get("poetry", {}).get("dependencies", {})
-            groups.append(poetry.keys())
+            groups.append(document.get("tool", {}).get("poetry", {}).get("dependencies", {}).keys())
             for group in groups:
                 for item in group:
                     match = DEPENDENCY_NAME_RE.match(str(item))
@@ -215,6 +226,19 @@ def declared_dependencies(root: Path, file_path: Path) -> set[str]:
                         dependencies.add(normalized_name(match.group(1)))
         except (ImportError, OSError, ValueError, TypeError):
             continue
+
+    try:
+        metadata = re.search(r"(?ms)^# /// script\s*$\n(?P<body>(?:#.*\n)*?)# ///\s*$", file_path.read_text(encoding="utf-8"))
+        if metadata:
+            import tomllib
+
+            document = tomllib.loads("\n".join(line.removeprefix("#").lstrip() for line in metadata.group("body").splitlines()))
+            for item in document.get("dependencies", []):
+                match = DEPENDENCY_NAME_RE.match(str(item))
+                if match:
+                    dependencies.add(normalized_name(match.group(1)))
+    except (ImportError, OSError, ValueError, TypeError):
+        pass
     return dependencies
 
 
@@ -281,15 +305,8 @@ def explicit_predicate_outcome(handler: ast.ExceptHandler, parents: dict[ast.AST
         (ancestor for ancestor in ancestors(parent, parents) if isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef))),
         None,
     )
-    if function is None or not function.name.startswith(("is_", "has_", "can_", "supports_", "exists_")):
-        return False
-    return any(
-        isinstance(statement, ast.Return)
-        and isinstance(statement.value, ast.Constant)
-        and isinstance(statement.value.value, bool)
-        and statement.value.value is not fallback.value
-        for statement in parent.body
-    )
+    returns_bool = isinstance(function.returns, ast.Name) and function.returns.id == "bool" if function is not None else False
+    return function is not None and (returns_bool or function.name.lstrip("_").startswith(("is_", "has_", "can_", "supports_", "exists_")))
 
 
 def safe_fallback(node: ast.AST | None) -> bool:
@@ -314,13 +331,15 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
     roots = project_roots(root, file_path)
     dependencies = declared_dependencies(root, file_path)
     stdlib_modules = getattr(sys, "stdlib_module_names", set(sys.builtin_module_names))
+    test_file = "tests" in file_path.parts or file_path.name.startswith("test_")
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             if under_type_checking(node, parents) or optional_import(node, parents) or platform_conditional(node, parents):
                 continue
             for module in import_roots(node):
-                if module in stdlib_modules or module_on_disk(module, roots) or normalized_name(module) in dependencies:
+                dependency = normalized_name(module)
+                if module in stdlib_modules or module_on_disk(module, roots) or dependency in dependencies or f"python-{dependency}" in dependencies or f"{dependency}-python" in dependencies or bool(KNOWN_DISTRIBUTIONS.get(module, set()) & dependencies):
                     continue
                 findings.append(
                     finding(
@@ -333,7 +352,7 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
                         rule_id="dependency.unresolved",
                         classification="defect",
                         confidence="C2",
-                        risk="R2",
+                        risk="R1" if test_file else "R2",
                         maximum_action="observe",
                         message=f"Module '{module}' is not resolvable from safe project/interpreter search roots",
                         evidence=["Python AST import extraction", "no standard-library, local, installed, or same-name declared dependency found"],
@@ -343,7 +362,7 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
 
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not isinstance(parents.get(node), ast.ClassDef):
             call = identity_wrapper(node)
-            if call is not None:
+            if call is not None and node.name.startswith("_") and not test_file:
                 findings.append(
                     finding(
                         root=root,
@@ -365,12 +384,46 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
 
         if isinstance(node, ast.ExceptHandler):
             body = node.body
+            function = next(
+                (parent for parent in ancestors(node, parents) if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))),
+                None,
+            )
+            public_contract = (function is None or not function.name.startswith("_")) and not test_file
+            recurring_boundary = any(isinstance(parent, (ast.For, ast.AsyncFor, ast.While)) for parent in ancestors(node, parents))
+            self_check = any(
+                isinstance(parent, ast.If) and "__name__" in ast.unparse(parent.test) and "__main__" in ast.unparse(parent.test)
+                for parent in ancestors(node, parents)
+            )
+            intent_lines = lines[node.lineno - 1 : getattr(node, "end_lineno", node.lineno)]
+            for trailing in lines[getattr(node, "end_lineno", node.lineno) :]:
+                if trailing.lstrip().startswith("#") and len(trailing) - len(trailing.lstrip()) >= node.col_offset:
+                    intent_lines.append(trailing)
+                    continue
+                break
+            explicitly_intentional = any(
+                phrase in "".join(intent_lines).lower()
+                for phrase in ("intentional", "optional", "best-effort", "best effort", "never fatal", "never break", "non-fatal", "must still")
+            )
+            documented_boundary = any(
+                line.lstrip().startswith("#") and not line.lstrip().startswith(("# TODO", "# FIXME"))
+                for line in intent_lines
+            )
+            header_comment = lines[node.lineno - 1].partition("#")[2].strip().lower()
+            documented_boundary = documented_boundary or bool(
+                header_comment and not re.fullmatch(r"(?:noqa(?::\s*[a-z0-9,]+)?|pragma:\s*no cover|nosec(?:\s+\w+)?|type:\s*ignore.*)", header_comment)
+            )
+            explicitly_intentional = explicitly_intentional or documented_boundary
+            broad_exception = node.type is None or name_is(node.type, {"Exception", "BaseException"})
+            fallback = body[-1].value if body and isinstance(body[-1], ast.Return) else None
             if (
-                body
-                and isinstance(body[-1], ast.Return)
-                and safe_fallback(body[-1].value)
+                fallback is not None
+                and safe_fallback(fallback)
                 and all(log_statement(item) for item in body[:-1])
+                and not explicitly_intentional
                 and not explicit_predicate_outcome(node, parents)
+                and public_contract
+                and not self_check
+                and broad_exception
             ):
                 findings.append(
                     finding(
@@ -390,7 +443,15 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
                         unknown=["caller contract and whether the fallback is intentionally visible"],
                     )
                 )
-            elif body and all(isinstance(item, ast.Pass) or log_statement(item) for item in body):
+            elif (
+                body
+                and not explicitly_intentional
+                and public_contract
+                and not recurring_boundary
+                and not self_check
+                and all(isinstance(item, ast.Pass) or log_statement(item) for item in body)
+                and broad_exception
+            ):
                 log_only = any(log_statement(item) for item in body)
                 findings.append(
                     finding(
@@ -403,7 +464,7 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
                         rule_id="errors.suppressed",
                         classification="context_conflict",
                         confidence="C2",
-                        risk="R2",
+                        risk="R2" if log_only else "R3",
                         maximum_action="observe",
                         message="Except handler only logs or passes before control continues" if log_only else "Except handler only passes before control continues",
                         evidence=["AST handler body contains no return, raise, retry, or recovery operation"],

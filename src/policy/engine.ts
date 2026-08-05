@@ -215,16 +215,20 @@ export function applyPolicy(
   const store = new StateStore(rootDir, stateRoot);
   let suppressions: Suppression[] = [];
   let health: RuleHealth[] = [];
+  let feedback: FeedbackRecord[] = [];
   let policyStoreDiagnostic: string | undefined;
   try {
     policies = loadRulePolicies();
     const state = store.load();
     suppressions = state.suppressions;
+    feedback = state.feedback;
     health = calculateRuleHealth(state.feedback);
   } catch (error) {
     policyStoreDiagnostic = `policy state unavailable; remediation authority remains conservative: ${error instanceof Error ? error.message : String(error)}`;
   }
   const healthByRule = new Map(health.map((item) => [item.ruleId, item]));
+  const feedbackByFinding = new Map<string, FeedbackRecord>();
+  for (const item of feedback) feedbackByFinding.set(item.findingId, item);
   const findings: Finding[] = [];
   const suppressedFindings: Finding[] = [...input.suppressedFindings];
   const decisions: PolicyDecision[] = [...input.policyDecisions];
@@ -291,6 +295,14 @@ export function applyPolicy(
     if (evidenceScore < 0.5) {
       finding.confidence = "C1";
       reasons.push("selective prediction reduced confidence because evidence is below 0.50");
+    }
+    const humanReview = feedbackByFinding.get(finding.id);
+    if (humanReview?.sourceHash === finding.sourceHash && humanReview.outcome === "accepted" && policy && !humanReview.unsafe) {
+      finding.maximumAction = "propose";
+      reasons.push(`exact finding accepted by human review: ${humanReview.reason}`);
+    } else if (humanReview?.sourceHash === finding.sourceHash && ["intentional", "wrong-location", "duplicate", "insufficient-evidence", "local-convention"].includes(humanReview.outcome)) {
+      finding.maximumAction = "ignore";
+      reasons.push(`exact finding closed by human review (${humanReview.outcome}): ${humanReview.reason}`);
     }
     decisions.push({
       findingId: finding.id,
@@ -378,6 +390,7 @@ export function recordFeedback(
     schemaVersion: SCHEMA_VERSION,
     id: fingerprint("feedback", { findingId: finding.id, outcome, reason, timestamp: new Date().toISOString() }),
     findingId: finding.id,
+    sourceHash: finding.sourceHash,
     ruleId: finding.ruleId,
     outcome,
     reason,

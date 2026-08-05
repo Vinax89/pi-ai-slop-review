@@ -118,6 +118,49 @@ export function formatReport(result: ScanResult, maxFindings = 100): string {
   return lines.join("\n");
 }
 
+export interface FindingQueuePage {
+  text: string;
+  totalFindings: number;
+  queueSize: number;
+  offset: number;
+  representatives: boolean;
+  findings: RankedFinding[];
+}
+
+export function createFindingQueue(
+  result: ScanResult,
+  options: { offset?: number; limit?: number; representatives?: boolean } = {},
+): FindingQueuePage {
+  const ranked = rankFindings(result.findings, result.policyDecisions);
+  const seenRules = new Set<string>();
+  const queue = options.representatives
+    ? ranked.filter((item) => {
+        if (seenRules.has(item.finding.ruleId)) return false;
+        seenRules.add(item.finding.ruleId);
+        return true;
+      })
+    : ranked;
+  const offset = Math.max(0, Math.trunc(options.offset ?? 0));
+  const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)));
+  const findings = queue.slice(offset, offset + limit);
+  const completeness = result.completeness ?? assessScanCompleteness(result);
+  const lines = [
+    "AI-SLOP FINDING QUEUE",
+    `Static scan: ${completeness.status} — ${result.scannedFiles.length} files, ${ranked.length} candidates, ${result.skipped.length} skipped`,
+    `Queue: ${findings.length} shown from ${queue.length}${options.representatives ? " rule-family representatives" : " ranked candidates"}; offset ${offset}`,
+    ...findings.map((item) => `- ${item.finding.id} | priority ${item.score}/100 | ${item.finding.ruleId} | ${item.finding.filePath}:${item.finding.line}:${item.finding.column}\n  ${item.finding.message}`),
+  ];
+  if (offset + findings.length < queue.length) lines.push(`Next offset: ${offset + findings.length}`);
+  return {
+    text: lines.join("\n"),
+    totalFindings: ranked.length,
+    queueSize: queue.length,
+    offset,
+    representatives: Boolean(options.representatives),
+    findings,
+  };
+}
+
 export function formatTimeline(events: LedgerEvent[], statuses: VerificationStatus[]): string {
   const lines = [`Assurance ledger: ${events.length} event(s)`];
   for (const event of events) {

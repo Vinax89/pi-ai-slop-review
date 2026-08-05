@@ -1,6 +1,6 @@
 # Pi AI-Slop Review
 
-A conservative, read-only [Pi](https://pi.dev) extension for evidence-backed review of TypeScript, JavaScript, and Python changes.
+A skill-first Pi package for evidence-backed LLM review of TypeScript, JavaScript, and Python changes, backed by a conservative deterministic extension.
 
 ## Requirements
 
@@ -28,10 +28,23 @@ Pi packages execute code with the user's privileges. Review the source and [`doc
 
 ## Use
 
+Use the bundled skill when the active Pi model should inspect and adjudicate detector candidates:
+
+```text
+/skill:ai-slop-review
+/skill:ai-slop-review src/a.ts src/b.ts
+/skill:ai-slop-review audit repository
+/skill:ai-slop-review audit repository full
+```
+
+The skill makes the current Pi model the decision engine: it runs the bounded scanner, reads each selected finding and its source, traces callers and contracts, tries to falsify the claim, and reports `confirmed`, `dismissed`, or `needs-context`. It reports static-scan and LLM-adjudication coverage separately and never infers AI authorship. Explicit `/skill:ai-slop-review` invocation guarantees the workflow is loaded; automatic skill selection remains model-dependent.
+
+Raw extension commands remain available for deterministic scanning, state, and diagnostics:
+
 - `/slop-review` reviews files changed through tracked `edit`, `write`, or `ctx_edit` calls in the current Pi session.
 - `/slop-review src/a.ts src/b.ts` reviews explicit project-relative files.
 - `/slop-audit` explicitly runs repository-wide review of up to 10,000 supported files by default; native TypeScript scans and repository-graph extraction use programs bounded to 250 files and 4 MiB of root source, and Python graph helpers retry oversized output in smaller bounded batches.
-- Every review or audit runs in a reusable isolated child process with a 384 MiB old-generation limit; streamed content hashes identify unchanged requests without a second result copy, garbage collection runs only under heap pressure, and recycled processes reuse Node's native compile cache. Results report `complete`, `partial`, or `abstained`; process failure or memory-limit exit becomes `abstained` instead of terminating Pi. The private Markdown report is a human decision report: compact tables summarize workload, dispositions, hotspots, and health; a family decision queue names missing evidence and the next investigation; and one source-backed detail section per family provides exact feedback commands plus remediation and verification gated behind acceptance. Linked tests, callers, and specifications are named when available. The complete candidate set remains available through `/slop-findings`, JSON, and SARIF.
+- Every review or audit runs in a reusable isolated child process with a 384 MiB old-generation limit; streamed content hashes identify unchanged requests without a second result copy, garbage collection runs only under heap pressure, and recycled processes reuse Node's native compile cache. Results report `complete`, `partial`, or `abstained`; process failure or memory-limit exit becomes `abstained` instead of terminating Pi. The private Markdown report states whether any code change is supported, separates actionable proposals from detector hypotheses, and provides a representative-review queue for calibration. Feedback applies only to the named finding, never an entire family. Linked tests, callers, and specifications are named when available. The complete candidate set remains available through `/slop-findings`, JSON, and SARIF.
 - `/slop-findings` opens the TUI finding picker; a finding ID prefix opens it directly.
 - `/slop-triage` summarizes evidence, counterevidence, uncertainty, and human-review guidance; findings are never treated as proof that code is removable.
 - `/slop-timeline` shows content-hash-valid mutations and verification freshness.
@@ -50,7 +63,7 @@ Pi packages execute code with the user's privileges. Review the source and [`doc
 - `/slop-experiment` runs bounded pure-expression property, metamorphic, shadow, mutation, invariant, regression-generation, equality-saturation, and CEGIS checks.
 - `/slop-formal` runs explicitly enabled SMT expression equivalence or Alive2-compatible LLVM translation validation through exact configured, network-isolated commands.
 - `/slop-retrieve` ranks local graph context without uploading source. `/slop-critics` is an opt-in remote advisory panel whose non-abstaining responses must cite existing deterministic evidence IDs.
-- The `slop_review`, `slop_context`, `slop_intent`, `slop_provenance`, `slop_clusters`, `slop_propose`, `slop_verify`, `slop_experiment`, `slop_formal`, `slop_retrieve`, and `slop_critics` tools expose the same capabilities to the agent. Agent tools never apply patches to the real checkout.
+- The `slop_review`, `slop_findings`, `slop_context`, `slop_intent`, `slop_provenance`, `slop_clusters`, `slop_propose`, `slop_verify`, `slop_experiment`, `slop_formal`, `slop_retrieve`, and `slop_critics` tools expose the same capabilities to the agent. `slop_review` accepts session, explicit-path, or repository scope; `slop_findings` provides stable IDs, bounded pagination, and one representative per detector family. Agent tools never apply patches to the real checkout.
 
 The scanner federates a TypeScript `Program`/`TypeChecker`, an isolated Python stdlib AST helper, explicitly trusted language servers, SARIF 2.1, ESLint/Ruff/Pyright/Knip reports, LCOV/coverage.py reports, and local dependency provenance. It reports:
 

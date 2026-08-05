@@ -6,12 +6,13 @@ interface CompletenessInput {
   skipped: SkippedFile[];
 }
 
-function intentionallyDisabled(item: SkippedFile): boolean {
-  return /^<[^>]+>$/.test(item.filePath) && /disabled by configuration/i.test(item.reason);
+function nonBlockingSkip(item: SkippedFile): boolean {
+  return /^<[^>]+>$/.test(item.filePath) && /disabled by configuration/i.test(item.reason) ||
+    /generated or vendor-like file/i.test(item.reason);
 }
 
 export function assessScanCompleteness(input: CompletenessInput): ScanCompleteness {
-  const blockingSkips = input.skipped.filter((item) => !intentionallyDisabled(item));
+  const blockingSkips = input.skipped.filter((item) => !nonBlockingSkip(item));
   const incompleteProviders = input.providers.filter((provider) => provider.status !== "completed");
   const reasons = [
     ...(input.scannedFiles.length ? [] : ["no files were scanned"]),

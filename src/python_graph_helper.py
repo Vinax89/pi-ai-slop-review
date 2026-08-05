@@ -80,7 +80,8 @@ def scan(file_path: Path, source: str) -> dict[str, Any]:
             kind = "class" if isinstance(node, ast.ClassDef) else "test" if node.name.startswith("test") else "function"
             start = offset(lines, getattr(node, "lineno", 1), getattr(node, "col_offset", 0))
             end = offset(lines, getattr(node, "end_lineno", getattr(node, "lineno", 1)), getattr(node, "end_col_offset", 0))
-            body_hash = hashlib.sha256(ast.dump(ast.Module(body=getattr(node, "body", []), type_ignores=[]), include_attributes=False).encode()).hexdigest()
+            significant_body = [item for item in getattr(node, "body", []) if not (isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str))]
+            body_hash = hashlib.sha256(ast.dump(ast.Module(body=significant_body, type_ignores=[]), include_attributes=False).encode()).hexdigest() if len(significant_body) >= 2 else None
             nodes.append({
                 "kind": kind,
                 "name": node.name,

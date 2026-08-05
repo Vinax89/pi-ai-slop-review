@@ -25,7 +25,7 @@ import { writeExport } from "./src/export.ts";
 import { queryContext } from "./src/graph/query.ts";
 import { applyProposal, createProposal, listLaboratory, rollbackProposal, validateProposal } from "./src/lab.ts";
 import { addSuppression, recordFeedback, removeSuppression } from "./src/policy/engine.ts";
-import { formatClaims, formatDelta, formatReport, formatTimeline, formatTriage } from "./src/report.ts";
+import { createFindingQueue, formatClaims, formatDelta, formatReport, formatTimeline, formatTriage } from "./src/report.ts";
 import { scanFilesIsolated } from "./src/isolated-scan.ts";
 import type { ClaimAssessment, ExperimentSpec, FeedbackRecord, Finding, LedgerEvent, ScanResult, ScanScope } from "./src/types.ts";
 
@@ -816,9 +816,12 @@ export default async function (pi: any): Promise<void> {
       "Do not remove code without resolving reported counterevidence, unknowns, and verification requirements.",
     ],
     parameters: Type.Object({
+      scope: Type.Optional(Type.String({
+        description: "session for current changes or repository for bounded repository discovery",
+      })),
       paths: Type.Optional(
         Type.Array(Type.String(), {
-          description: "Project-relative TypeScript, JavaScript, or Python paths; omit for current-session files",
+          description: "Project-relative TypeScript, JavaScript, or Python paths; explicit paths take precedence over scope",
           maxItems: 100,
         }),
       ),
@@ -827,29 +830,41 @@ export default async function (pi: any): Promise<void> {
 
     async execute(
       _toolCallId: string,
-      params: { paths?: string[]; claims?: string },
+      params: { scope?: "session" | "repository"; paths?: string[]; claims?: string },
       signal: AbortSignal | undefined,
-      onUpdate: any,
-      ctx: any,
+      onUpdate: ((update: { content: Array<{ type: "text"; text: string }> }) => void) | undefined,
+      ctx: { cwd: string; ui: { setStatus(name: string, status: string): void } },
     ) {
       ensureInitialized(ctx);
       if (signal?.aborted) throw new Error("AI-slop review cancelled");
-      const paths = params.paths?.length ? params.paths : trackedPaths();
-      if (!paths.length) {
+      if (params.scope !== undefined && params.scope !== "session" && params.scope !== "repository") throw new Error("scope must be session or repository");
+      let paths = params.paths?.length ? params.paths : undefined;
+      const mode: ScanScope["mode"] = paths ? "explicit" : params.scope ?? "session";
+      let discoveryTruncated = false;
+      if (mode === "repository") {
+        const discovery = discoverRepositoryFiles(ctx.cwd, loadedConfig!.config.limits.maxFiles);
+        paths = discovery.paths;
+        discoveryTruncated = discovery.truncated;
+      }
+      const pathCount = paths?.length ?? trackedPaths().length;
+      if (!pathCount) {
         return {
-          content: [{ type: "text", text: "No current-session supported file changes are tracked; provide explicit paths." }],
+          content: [{ type: "text", text: mode === "repository"
+            ? "No supported repository files were found."
+            : "No current-session supported file changes are tracked; provide explicit paths or use repository scope." }],
           details: undefined,
         };
       }
-      onUpdate?.({ content: [{ type: "text", text: `Reviewing ${paths.length} file(s)...` }] });
-      const outcome = await review(ctx.cwd, params.paths?.length ? params.paths : undefined, signal, params.claims);
+      onUpdate?.({ content: [{ type: "text", text: `${mode === "repository" ? "Auditing" : "Reviewing"} ${pathCount} file(s)...` }] });
+      const outcome = await review(ctx.cwd, paths, signal, params.claims, mode, discoveryTruncated);
+      if (discoveryTruncated) outcome.warnings.push(`repository discovery stopped at ${loadedConfig!.config.limits.maxFiles} files; result completeness is partial`);
       lastOutcome = outcome;
       ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} findings · ${outcome.delta.added.length} new`);
       return { content: [{ type: "text", text: reviewText(outcome, 75) }], details: outcome };
     },
 
-    renderCall(args: { paths?: string[] }, theme: any) {
-      const scope = args.paths?.length ? `${args.paths.length} explicit file(s)` : "current-session files";
+    renderCall(args: { scope?: "session" | "repository"; paths?: string[] }, theme: { fg(color: string, text: string): string; bold(text: string): string }) {
+      const scope = args.paths?.length ? `${args.paths.length} explicit file(s)` : args.scope === "repository" ? "repository" : "current-session files";
       return new Text(theme.fg("toolTitle", theme.bold("slop_review ")) + theme.fg("muted", scope), 0, 0);
     },
 
@@ -860,6 +875,49 @@ export default async function (pi: any): Promise<void> {
       let text = theme.fg(outcome.result.findings.length ? "warning" : "success", resultSummary(outcome));
       if (expanded) text += `\n${theme.fg("dim", reviewText(outcome, 20))}`;
       return new Text(text, 0, 0);
+    },
+  });
+
+  pi.registerTool({
+    name: "slop_findings",
+    label: "AI-slop findings",
+    description: "Read one exact finding or a bounded ranked page from the latest slop_review. Use representative mode to sample one highest-priority candidate per rule family.",
+    promptSnippet: "Inspect stable finding IDs and evidence before adjudicating detector candidates",
+    promptGuidelines: [
+      "Retrieve the full finding before deciding whether it is confirmed, dismissed, or needs context.",
+      "Representative mode samples detector families; it is not a complete LLM review of every candidate.",
+    ],
+    parameters: Type.Object({
+      findingId: Type.Optional(Type.String({ description: "Exact finding ID or unique prefix from the latest review" })),
+      offset: Type.Optional(Type.Number({ description: "Zero-based ranked queue offset" })),
+      limit: Type.Optional(Type.Number({ description: "Page size from 1 to 20" })),
+      representatives: Type.Optional(Type.Boolean({ description: "Return only the highest-ranked finding from each rule family" })),
+    }),
+    async execute(
+      _toolCallId: string,
+      params: { findingId?: string; offset?: number; limit?: number; representatives?: boolean },
+      signal: AbortSignal | undefined,
+    ) {
+      if (signal?.aborted) throw new Error("AI-slop finding retrieval cancelled");
+      if (!lastOutcome) throw new Error("Run slop_review before requesting findings");
+      if (params.findingId) {
+        const finding = findingByPrefix(params.findingId);
+        return { content: [{ type: "text", text: findingDetails(finding) }], details: finding };
+      }
+      const page = createFindingQueue(lastOutcome.result, params);
+      return {
+        content: [{ type: "text", text: page.text }],
+        details: page,
+      };
+    },
+    renderCall(args: { findingId?: string; representatives?: boolean }, theme: { fg(color: string, text: string): string; bold(text: string): string }) {
+      const scope = args.findingId ? args.findingId : args.representatives ? "representatives" : "ranked queue";
+      return new Text(theme.fg("toolTitle", theme.bold("slop_findings ")) + theme.fg("muted", scope), 0, 0);
+    },
+    renderResult(result: { content?: Array<{ text?: string }>; details?: { findings?: unknown[] } }, { expanded }: { expanded: boolean }, theme: { fg(color: string, text: string): string }) {
+      const text = result.content?.[0]?.text ?? "No finding details";
+      const count = result.details?.findings?.length;
+      return new Text(theme.fg("info", expanded || count === undefined ? text : `${count} finding(s) returned`), 0, 0);
     },
   });
 
