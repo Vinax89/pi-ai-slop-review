@@ -1,7 +1,7 @@
 import { readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
-const EXCLUDED_DIRECTORIES = new Set([".git", ".hg", ".svn", ".venv", "venv", "node_modules", "dist", "build", "coverage", "vendor"]);
+const EXCLUDED_DIRECTORIES = new Set([".git", ".hg", ".svn", ".venv", ".next", "venv", "node_modules", "dist", "build", "coverage", "vendor"]);
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py", ".md"]);
 const MANIFESTS = new Set(["package.json", "pyproject.toml"]);
 

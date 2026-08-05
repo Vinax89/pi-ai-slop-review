@@ -74,7 +74,10 @@ class ScanTransport {
       });
       return;
     }
-    this.child = fork(fileURLToPath(import.meta.url), [], {
+    const entry = import.meta.url.endsWith(".ts") && import.meta.url.includes("/node_modules/")
+      ? new URL("../dist/src/isolated-scan.js", import.meta.url)
+      : new URL(import.meta.url);
+    this.child = fork(fileURLToPath(entry), [], {
       env: {
         ...process.env,
         NODE_COMPILE_CACHE: process.env.NODE_COMPILE_CACHE ?? path.join(process.env.XDG_CACHE_HOME ?? path.join(homedir(), ".cache"), "pi-ai-slop-review", "compile-cache"),
@@ -89,7 +92,7 @@ class ScanTransport {
         `--max-old-space-size=${runtime.maxOldGenerationSizeMb ?? DEFAULT_OLD_GENERATION_MB}`,
       ],
       serialization: "advanced",
-      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      stdio: ["ignore", "ignore", "inherit", "ipc"],
     });
   }
 

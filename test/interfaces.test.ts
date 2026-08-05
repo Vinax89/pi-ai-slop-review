@@ -50,9 +50,11 @@ test("repository discovery is explicit, bounded, and ignores symlinked or genera
   const root = fixture();
   mkdirSync(path.join(root, "src"));
   mkdirSync(path.join(root, "node_modules"));
+  mkdirSync(path.join(root, ".next"));
   writeFileSync(path.join(root, "src/a.ts"), "export const a = 1;\n");
   writeFileSync(path.join(root, "src/b.py"), "b = 1\n");
   writeFileSync(path.join(root, "node_modules/ignored.js"), "bad\n");
+  writeFileSync(path.join(root, ".next/ignored.js"), "generated\n");
   const outside = mkdtempSync(path.join(tmpdir(), "ai-slop-interface-outside-"));
   writeFileSync(path.join(outside, "outside.ts"), "outside\n");
   symlinkSync(outside, path.join(root, "linked"));

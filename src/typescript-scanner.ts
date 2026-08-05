@@ -127,6 +127,8 @@ function createProject(files: string[], configPath?: string, previousProjects: T
     rootNames = files;
   }
 
+  if (!referenceScopeComplete) options = { ...options, noResolve: true, types: [] };
+
   const previous = previousProjects.find((project) =>
     project.configPath === configPath &&
     project.rootNames.length === rootNames.length &&
@@ -183,7 +185,7 @@ function finding(
 }
 
 function isGenerated(filePath: string, text: string): boolean {
-  if (/(?:^|\/)(?:dist|build|coverage|node_modules|vendor|generated)(?:\/|$)/i.test(normalizePath(filePath))) {
+  if (/(?:^|\/)(?:dist|build|coverage|node_modules|vendor|generated|\.next)(?:\/|$)/i.test(normalizePath(filePath))) {
     return true;
   }
   return /(?:@generated|generated file|do not edit)/i.test(text.slice(0, 500));
@@ -569,6 +571,61 @@ function resolveFiles(rootDir: string, inputs: string[], maxFileBytes = DEFAULT_
   return { files: [...new Set(files)], skipped };
 }
 
+interface ScanAccumulator {
+  root: string;
+  options: TypeScriptScanOptions;
+  retainProjects: boolean;
+  projects: TypeScriptProjectContext[];
+  findings: FindingDraft[];
+  scannedFiles: string[];
+  skipped: SkippedFile[];
+  maxFindings: number;
+}
+
+function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[]): void {
+  const { root, options, retainProjects, projects, findings, scannedFiles, skipped, maxFindings } = state;
+  const project = createProject(files, key === "<none>" ? undefined : key, options.previousProjects);
+  if (retainProjects) projects.push(project);
+  const hashes = new Map<string, string>();
+  const validFiles = new Set<string>();
+
+  for (const file of files) {
+    if (options.signal?.aborted) break;
+    const sourceFile = project.program.getSourceFile(file);
+    const display = normalizePath(path.relative(root, file));
+    if (!sourceFile) {
+      skipped.push({ filePath: display, reason: "TypeScript program did not include the file" });
+      continue;
+    }
+    const text = sourceFile.text;
+    if (isGenerated(display, text)) {
+      skipped.push({ filePath: display, reason: "generated or vendor-like file" });
+      continue;
+    }
+    const syntaxErrors = project.program.getSyntacticDiagnostics(sourceFile);
+    if (syntaxErrors.length > 0) {
+      skipped.push({ filePath: display, reason: "file has TypeScript syntax diagnostics" });
+      continue;
+    }
+    const sourceHash = contentHashOnce(file, text);
+    hashes.set(path.resolve(file), sourceHash);
+    validFiles.add(path.resolve(file));
+    scannedFiles.push(display);
+    if (findings.length < maxFindings) {
+      const remaining = maxFindings - findings.length;
+      findings.push(...scanImports(project, sourceFile, sourceHash, root).slice(0, remaining));
+    }
+    if (findings.length < maxFindings) {
+      const remaining = maxFindings - findings.length;
+      findings.push(...scanCatchClauses(sourceFile, sourceHash, root).slice(0, remaining));
+    }
+  }
+
+  if (!options.signal?.aborted && findings.length < maxFindings) {
+    findings.push(...wrapperFindings(project, root, collectWrappers(project, validFiles), hashes).slice(0, maxFindings - findings.length));
+  }
+}
+
 export function scanTypeScriptFilesWithProjects(
   rootDir: string,
   inputPaths: string[],
@@ -598,49 +655,12 @@ export function scanTypeScriptFilesWithProjects(
     }
   }
 
+  const accumulator = { root, options, retainProjects, projects, findings, scannedFiles, skipped, maxFindings };
   for (const [key, groupFiles] of groups) {
     for (const files of batchTypeScriptFiles(groupFiles)) {
       if (options.signal?.aborted) break;
-      const project = createProject(files, key === "<none>" ? undefined : key, options.previousProjects);
-      if (retainProjects) projects.push(project);
-      const hashes = new Map<string, string>();
-      const validFiles = new Set<string>();
-
-      for (const file of files) {
-        if (options.signal?.aborted) break;
-        const sourceFile = project.program.getSourceFile(file);
-        const display = normalizePath(path.relative(root, file));
-        if (!sourceFile) {
-          skipped.push({ filePath: display, reason: "TypeScript program did not include the file" });
-          continue;
-        }
-        const text = sourceFile.text;
-        if (isGenerated(display, text)) {
-          skipped.push({ filePath: display, reason: "generated or vendor-like file" });
-          continue;
-        }
-        const syntaxErrors = project.program.getSyntacticDiagnostics(sourceFile);
-        if (syntaxErrors.length > 0) {
-          skipped.push({ filePath: display, reason: "file has TypeScript syntax diagnostics" });
-          continue;
-        }
-        const sourceHash = contentHashOnce(file, text);
-        hashes.set(path.resolve(file), sourceHash);
-        validFiles.add(path.resolve(file));
-        scannedFiles.push(display);
-        if (findings.length < maxFindings) {
-          const remaining = maxFindings - findings.length;
-          findings.push(...scanImports(project, sourceFile, sourceHash, root).slice(0, remaining));
-        }
-        if (findings.length < maxFindings) {
-          const remaining = maxFindings - findings.length;
-          findings.push(...scanCatchClauses(sourceFile, sourceHash, root).slice(0, remaining));
-        }
-      }
-
-      if (!options.signal?.aborted && findings.length < maxFindings) {
-        findings.push(...wrapperFindings(project, root, collectWrappers(project, validFiles), hashes).slice(0, maxFindings - findings.length));
-      }
+      scanTypeScriptBatch(accumulator, key, files);
+      if (!retainProjects) global.gc?.();
     }
   }
 
