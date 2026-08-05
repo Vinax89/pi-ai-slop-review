@@ -153,7 +153,7 @@ test("graph reuses the native TypeScript project without rediscovering configura
   assert.equal(built.facts.length, paths.length);
 });
 
-test("large TypeScript audits stay bounded and report the omitted graph", async () => {
+test("large TypeScript audits stream the repository graph within budget", async () => {
   const { root, state, config } = fixture();
   const paths = Array.from({ length: 251 }, (_, index) => `src/value-${index}.ts`);
   for (const [index, filePath] of paths.entries()) {
@@ -172,11 +172,8 @@ test("large TypeScript audits stay bounded and report the omitted graph", async 
   });
 
   assert.equal(result.scannedFiles.length, paths.length);
-  assert.equal(result.completeness?.status, "partial");
-  assert.match(result.providers.find((provider) => provider.id === "repository-graph")?.diagnostic ?? "", /memory budget/);
-  const wrapper = result.findings.find((finding) => finding.ruleId === "structure.pass-through-wrapper");
-  assert.equal(wrapper?.maximumAction, "observe");
-  assert.match(wrapper?.unknown.join(" ") ?? "", /memory-bounded/);
+  assert.equal(result.completeness?.status, "complete");
+  assert.equal(result.providers.find((provider) => provider.id === "repository-graph")?.status, "completed");
 });
 
 test("repository graph summarizes duplicate groups once with bounded examples", async () => {
@@ -310,6 +307,20 @@ test("graph resolves Python cross-file imports, keeps helpers non-test, and stri
   assert.equal(testFacts?.nodes.find((item) => item.name === "test_value")?.kind, "test");
   const specification = built.facts.find((item) => item.filePath === "docs/links.md");
   assert.ok(specification?.edges.some((item) => item.kind === "governs" && item.metadata.targetPath === "pkg/base.py"));
+});
+
+test("Python graph retries smaller batches when helper output reaches its buffer limit", async () => {
+  const { root, config } = fixture();
+  const paths = Array.from({ length: 8 }, (_, index) => `src/module-${index}.py`);
+  for (const [index, filePath] of paths.entries()) {
+    writeFileSync(path.join(root, filePath), `def one():\n    return ${index}\n\ndef two():\n    return one()\n\ndef three():\n    return two()\n`);
+  }
+  config.limits.maxOutputBytes = 4 * 1024;
+
+  const built = await buildGraphFacts(root, paths, config);
+
+  assert.deepEqual(Object.keys(built.errors), []);
+  assert.deepEqual(built.facts.map((facts) => facts.filePath).sort(), paths);
 });
 
 test("graph isolates malformed TOML facts and invalidates TypeScript facts when tsconfig changes", async () => {

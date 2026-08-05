@@ -26,7 +26,8 @@ export function discoverRepositoryFiles(rootDir: string, maxFiles: number): { pa
       const absolute = path.join(directory, entry.name);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        if (!EXCLUDED_DIRECTORIES.has(entry.name)) queue.push(absolute);
+        const relative = path.relative(root, absolute).split(path.sep).join("/");
+        if (!EXCLUDED_DIRECTORIES.has(entry.name) && !/(?:^|\/)\.[^/]+\/worktrees$/.test(relative)) queue.push(absolute);
         continue;
       }
       if (!entry.isFile()) continue;

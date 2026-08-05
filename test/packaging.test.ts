@@ -17,7 +17,7 @@ function packedFiles(): string[] {
 
 test("npm pack contains runtime, schema, documentation, and metadata artifacts", () => {
   const files = packedFiles();
-  for (const required of ["dist/src/isolated-scan.js", "index.ts", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "schema/config.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md", "npm-shrinkwrap.json"]) {
+  for (const required of ["dist/src/isolated-scan.js", "dist/src/python_common.py", "index.ts", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "schema/config.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md", "npm-shrinkwrap.json"]) {
     assert.ok(files.includes(required), `packed package is missing ${required}`);
   }
   assert.equal(files.some((file) => file.startsWith("test/")), false);
@@ -57,7 +57,7 @@ test("packed evaluation module imports and loads the bundled corpus", () => {
   }
 });
 
-test("packed compiled isolated worker runs from node_modules", () => {
+test("packed compiled worker scans TypeScript and Python from node_modules", () => {
   const destination = mkdtempSync(path.join(tmpdir(), "ai-slop-entrypoint-pack-"));
   try {
     const packOutput = execFileSync("npm", ["pack", "--json", "--pack-destination", destination], { encoding: "utf8" });
@@ -69,14 +69,15 @@ test("packed compiled isolated worker runs from node_modules", () => {
     execFileSync("tar", ["-xzf", path.join(destination, archive), "--strip-components=1", "-C", extracted]);
     execFileSync("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit"], { cwd: extracted, stdio: "ignore" });
     writeFileSync(path.join(extracted, "input.ts"), "export const value = 1;\n");
+    writeFileSync(path.join(extracted, "input.py"), "value = 1\n");
     // Runtime imports exercise the extracted package rather than this test module's source tree.
-    const script = "const { scanFilesIsolated, resetIsolatedScanWorker } = await import('./dist/src/isolated-scan.js'); const { DEFAULT_CONFIG } = await import('./dist/src/core/config.js'); const config = structuredClone(DEFAULT_CONFIG); config.graph.enabled = false; const result = await scanFilesIsolated('.', ['input.ts'], undefined, 'explicit', { config }); await resetIsolatedScanWorker(); process.stdout.write(JSON.stringify({ scannedFiles: result.scannedFiles, status: result.completeness?.status }));";
+    const script = "const { scanFilesIsolated, resetIsolatedScanWorker } = await import('./dist/src/isolated-scan.js'); const { DEFAULT_CONFIG } = await import('./dist/src/core/config.js'); const config = structuredClone(DEFAULT_CONFIG); config.graph.enabled = false; const result = await scanFilesIsolated('.', ['input.ts', 'input.py'], undefined, 'explicit', { config }); await resetIsolatedScanWorker(); process.stdout.write(JSON.stringify({ scannedFiles: result.scannedFiles, status: result.completeness?.status }));";
     const runtimeOutput = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
       cwd: extracted,
       encoding: "utf8",
     });
     const packedResult = JSON.parse(runtimeOutput) as { scannedFiles: string[]; status: string };
-    assert.deepEqual(packedResult.scannedFiles, ["input.ts"]);
+    assert.deepEqual(packedResult.scannedFiles.sort(), ["input.py", "input.ts"]);
     assert.notEqual(packedResult.status, "abstained");
   } finally {
     rmSync(destination, { recursive: true, force: true });

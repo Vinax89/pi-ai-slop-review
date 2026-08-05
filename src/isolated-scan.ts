@@ -139,7 +139,7 @@ interface WorkerSession {
   jobs: number;
 }
 
-const DEFAULT_OLD_GENERATION_MB = 192;
+const DEFAULT_OLD_GENERATION_MB = 384;
 const GC_HEAP_PRESSURE_BYTES = Math.min(96 * 1024 * 1024, getHeapStatistics().heap_size_limit / 2);
 const DEFAULT_MAX_JOBS = 20;
 const DEFAULT_MAX_HEAP_MB = 128;

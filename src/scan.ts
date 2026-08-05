@@ -122,9 +122,6 @@ async function scanFilesUncached(
   const result = await federateEvidence(root, scanPaths, [typescript.result, python], mode, {
     ...options,
     typescriptProjects: typescript.projects,
-    graphSkipReason: typescriptPaths.length > 0 && typescript.projects.length === 0
-      ? "repository graph skipped to keep TypeScript analysis within its memory budget"
-      : undefined,
     budget,
     budgetReason: nativeBudgetReason,
   }, signal);

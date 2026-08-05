@@ -136,7 +136,8 @@ function configPathForFile(rootDir: string, filePath: string): string | undefine
   return configPath && normalizePath(configPath).startsWith(`${normalizePath(rootDir)}/`) ? configPath : undefined;
 }
 
-function configForFiles(files: string[], configPath?: string): { rootNames: string[]; options: ts.CompilerOptions } {
+function configForFiles(files: string[], configPath?: string, bounded = false): { rootNames: string[]; options: ts.CompilerOptions } {
+  const boundedOptions: ts.CompilerOptions = bounded ? { noResolve: true, types: [] } : {};
   if (!configPath) {
     return {
       rootNames: files,
@@ -147,13 +148,14 @@ function configForFiles(files: string[], configPath?: string): { rootNames: stri
         module: ts.ModuleKind.NodeNext,
         moduleResolution: ts.ModuleResolutionKind.NodeNext,
         target: ts.ScriptTarget.ES2022,
+        ...boundedOptions,
       },
     };
   }
   const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
-  if (loaded.error) return { rootNames: files, options: {} };
+  if (loaded.error) return { rootNames: files, options: boundedOptions };
   const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, path.dirname(configPath));
-  return { rootNames: files, options: { ...parsed.options, allowJs: true } };
+  return { rootNames: files, options: { ...parsed.options, allowJs: true, ...boundedOptions } };
 }
 
 function declarationId(rootDir: string, checker: ts.TypeChecker, symbol: ts.Symbol | undefined): string | undefined {
@@ -174,6 +176,7 @@ function extractTypescript(
   config: AiSlopConfig,
   reusableProjects: TypeScriptProjectContext[] = [],
   cached: Map<string, GraphCacheRecord> = new Map(),
+  onFacts?: (facts: GraphFileFacts[]) => void,
 ): { facts: GraphFileFacts[]; cachedFiles: string[] } {
   const groups = new Map<string, string[]>();
   const configPaths = new Map<string, string | undefined>();
@@ -199,8 +202,9 @@ function extractTypescript(
   const cachedFiles: string[] = [];
   for (const [key, groupFiles] of groups) {
     for (const files of batchTypeScriptFiles(groupFiles)) {
+      const batchFacts: GraphFileFacts[] = [];
       const reusable = reusableByKey.get(key);
-      const configured = reusable ? undefined : configForFiles(files, key === "<none>" ? undefined : key);
+      const configured = reusable ? undefined : configForFiles(files, key === "<none>" ? undefined : key, groupFiles.length > files.length);
       const options = reusable?.options ?? configured!.options;
       let compilerContext = JSON.stringify(options);
       const contextPath = reusable?.configPath ?? (key === "<none>" || key.startsWith("<reusable:") ? undefined : key);
@@ -333,8 +337,13 @@ function extractTypescript(
       }
       const uniqueEdges = [...new Map(edges.map((graphEdge) => [graphEdge.id, graphEdge])).values()];
       const sourceHash = sourceHashes.get(absolutePath)!;
-      facts.push({ filePath, sourceHash, cacheHash: sha256(`${sourceHash}\0${compilerContextHash}`), source, language: "typescript", nodes: [...uniqueNodes.values()], edges: uniqueEdges });
+      batchFacts.push({ filePath, sourceHash, cacheHash: sha256(`${sourceHash}\0${compilerContextHash}`), source, language: "typescript", nodes: [...uniqueNodes.values()], edges: uniqueEdges });
     }
+      if (batchFacts.length) {
+        if (onFacts) onFacts(batchFacts);
+        else facts.push(...batchFacts);
+      }
+      if (!reusable) global.gc?.();
     }
   }
   return { facts, cachedFiles };
@@ -470,6 +479,11 @@ async function extractPython(
           output = await runPythonGraphHelper(rootDir, batch, signal, maxFileBytes, maxOutputBytes, commandTimeoutMs);
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
+          if (batch.length > 1 && ((error as NodeJS.ErrnoException).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || detail.includes("maxBuffer"))) {
+            const middle = Math.ceil(batch.length / 2);
+            batches.push(batch.slice(0, middle), batch.slice(middle));
+            continue;
+          }
           const message = signal?.aborted
             ? "Python graph scan aborted"
             : detail.startsWith("Python graph helper ")
@@ -733,7 +747,7 @@ export async function buildGraphFacts(
     return { facts: [], errors: Object.fromEntries(paths.map((filePath) => [normalizePath(filePath.replace(/^@/, "")), "graph scan aborted"])), cachedFiles: [] };
   }
   const packageJson = extractPackageJson(root, packagePaths);
-  const typescript = extractTypescript(root, typescriptFiles, config, reusableProjects, cached);
+  const typescript = extractTypescript(root, typescriptFiles, config, reusableProjects, cached, onFacts);
   const groups = [typescript.facts, python.facts, packageJson.facts, extractMarkdown(root, markdownPaths, config)];
   const facts: GraphFileFacts[] = [];
   for (const group of groups) {
