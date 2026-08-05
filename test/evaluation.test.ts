@@ -148,7 +148,7 @@ test("JavaScript and Python inputs both scan through the compatibility path", as
   try {
     writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { allowJs: true, checkJs: true, module: "NodeNext", moduleResolution: "NodeNext", strict: true } }));
     writeFileSync(path.join(root, "input.js"), "export function wrapper(value) { return target(value); }\n");
-    writeFileSync(path.join(root, "input.py"), "def wrapper(value):\n    return target(value)\n");
+    writeFileSync(path.join(root, "input.py"), "def _wrapper(value):\n    return target(value)\n");
     const javascript = await scanFiles(root, ["input.js"], undefined, "explicit");
     const python = await scanFiles(root, ["input.py"], undefined, "explicit");
     assert.deepEqual(javascript.scannedFiles, ["input.js"]);

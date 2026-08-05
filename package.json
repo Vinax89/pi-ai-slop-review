@@ -27,10 +27,14 @@
   "pi": {
     "extensions": [
       "index.ts"
+    ],
+    "skills": [
+      "skills/ai-slop-review/SKILL.md"
     ]
   },
   "files": [
     "index.ts",
+    "skills",
     "src",
     "dist",
     "library",

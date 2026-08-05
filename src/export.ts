@@ -204,7 +204,7 @@ export function toMarkdown(result: ScanResult, rootDir?: string): string {
         "Inspect callers and contracts before deciding whether any change is justified.",
     });
   }
-  const decisionsRequired = [...familySummaries.values()].filter((summary) => summary.disposition !== "ignore").length;
+  const representativeReviews = [...familySummaries.values()].filter((summary) => summary.disposition !== "ignore").length;
   const proposedChanges = (actionCounts.get("propose") ?? 0) + (actionCounts.get("delegate-safe-fix") ?? 0);
   const sourceCache = new Map<string, { hash: string; lines: string[] }>();
   let sourceRoot: string | undefined;
@@ -226,10 +226,10 @@ export function toMarkdown(result: ScanResult, rootDir?: string): string {
     `| Generated | ${markdownText(result.generatedAt)} |`,
     `| Scope | ${markdownText(result.scope.mode)} |`,
     `| Files scanned | ${result.scannedFiles.length} |`,
-    `| Returned findings | ${result.findings.length} |`,
+    `| Returned detector hypotheses | ${result.findings.length} |`,
     `| Finding families | ${families.size} |`,
-    `| Decisions required | ${decisionsRequired} |`,
-    `| Policy proposals | ${proposedChanges} |`,
+    `| Representative reviews | ${representativeReviews} |`,
+    `| Actionable policy proposals | ${proposedChanges} |`,
     `| Suppressed findings | ${result.suppressedFindings.length} |`,
     `| Skipped or omitted items | ${result.skipped.length} |`,
     `| Completeness | ${markdownText(completeness.status)} |`,
@@ -244,14 +244,14 @@ export function toMarkdown(result: ScanResult, rootDir?: string): string {
     `| Ignore | No remediation is recommended | ${actionCounts.get("ignore") ?? 0} |`,
     "",
   ];
-  if ((actionCounts.get("observe") ?? 0) === ranked.length && ranked.length) {
-    lines.push(`> All ${ranked.length} returned findings are review-only. Review the ${families.size} family representative(s), not a ${ranked.length}-item patch queue.`, "");
+  if (!proposedChanges && ranked.length) {
+    lines.push(`> **No code change is supported by this report.** Review the ${families.size} representative(s) below only to calibrate the detectors. Each feedback command applies to one finding, never its whole family.`, "");
   }
   if (completeness.reasons.length) {
     lines.push("> **Incomplete review:** This result must not be interpreted as a clean scan.", "", ...completeness.reasons.map((reason) => `- ${markdownText(reason)}`), "");
   }
   lines.push(
-    "## Decision Queue",
+    "## Representative Review Queue",
     "",
     "| # | Finding family | Candidates | Priority | Current disposition | Missing evidence | Next action |",
     "| ---: | --- | ---: | ---: | --- | --- | --- |",
@@ -262,19 +262,20 @@ export function toMarkdown(result: ScanResult, rootDir?: string): string {
     "",
     "## Review Workflow",
     "",
-    "1. Use the decision queue to choose the highest-priority unresolved family.",
-    "2. Inspect its representative source, supporting evidence, counterevidence, and missing evidence.",
-    "3. Perform the listed investigation and record exactly one feedback outcome.",
-    "4. Change code only after an accepted decision with a contract-preserving fix and runnable verification.",
+    "1. Choose one representative from the queue.",
+    "2. Inspect its source, supporting evidence, counterevidence, and missing evidence.",
+    "3. Investigate the named contract and record one outcome for that representative only.",
+    "4. Re-run the review; exact accepted findings become proposal-eligible and closed findings become ignored.",
+    "5. Inspect other family members separately; change code only for an accepted finding with runnable verification.",
     "",
-    "## Decision Outcomes",
+    "## Representative Outcomes",
     "",
     "| Human conclusion | Feedback | Effect |",
     "| --- | --- | --- |",
-    "| The finding is valid and a verifiable fix is understood | accepted | Permit a narrow proposal |",
-    "| The behavior is intentional or contractually required | intentional | Keep the code; optionally suppress narrowly |",
+    "| The finding is valid and a verifiable fix is understood | accepted | Make this exact finding proposal-eligible on the next complete scan |",
+    "| The behavior is intentional or contractually required | intentional | Ignore this exact finding on the next scan |",
     "| The claim may be valid but its contract or impact is unknown | missing-context | Keep observing and gather context |",
-    "| The detector is wrong or the evidence does not support its claim | insufficient-evidence | Make no code change |",
+    "| The detector is wrong or the evidence does not support its claim | insufficient-evidence | Ignore this exact finding on the next scan |",
     "",
   );
   if (hotspots.size) {
@@ -290,7 +291,7 @@ export function toMarkdown(result: ScanResult, rootDir?: string): string {
       "",
     );
   }
-  lines.push("## Family Decisions", "");
+  lines.push("## Representative Reviews", "");
   let familyNumber = 0;
   for (const [ruleId, items] of families) {
     familyNumber += 1;
@@ -351,7 +352,7 @@ export function toMarkdown(result: ScanResult, rootDir?: string): string {
       ? policy.verificationSteps
       : ["Run the smallest test or static check that proves the affected behavior."]));
     lines.push(
-      `### Decision ${familyNumber} of ${families.size} — ${markdownText(ruleId)}`,
+      `### Representative ${familyNumber} of ${families.size} — ${markdownText(ruleId)}`,
       "",
       "| Field | Value |",
       "| --- | --- |",
@@ -377,9 +378,9 @@ export function toMarkdown(result: ScanResult, rootDir?: string): string {
       ...findingList("Missing Evidence", missingEvidence),
       ...findingList("Next Investigation", investigation),
       ...findingList("Policy Notes", decision?.reasons ?? []),
-      "#### Record the Decision",
+      "#### Record the Representative Outcome",
       "",
-      "Choose exactly one outcome defined above:",
+      "Choose exactly one outcome defined above. It applies only to this finding:",
       "",
       "```text",
       `/slop-feedback ${finding.id} accepted <reason>`,
@@ -412,7 +413,7 @@ export function toMarkdown(result: ScanResult, rootDir?: string): string {
       );
     }
     lines.push(
-      `**Other occurrences:** ${Math.max(0, items.length - 1)} · Open \`/slop-findings\` for the complete candidate list.`,
+      `**Unreviewed family members:** ${Math.max(0, items.length - 1)} · Open \`/slop-findings\` to inspect them individually.`,
       "",
     );
   }

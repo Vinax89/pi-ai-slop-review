@@ -23,7 +23,7 @@ function project(files: Record<string, string>, pyproject?: { dependencies?: str
   return root;
 }
 
-test("extracts imports with Python AST and resolves stdlib, local, and declared modules", async () => {
+test("resolves stdlib, local, declared, workspace, and inline-script imports", async () => {
   const root = project(
     {
       "local_module.py": "value = 1\n",
@@ -31,16 +31,27 @@ test("extracts imports with Python AST and resolves stdlib, local, and declared 
         "import os",
         "import local_module",
         "import declared_package",
+        "import dotenv",
+        "import jwt",
         "import surely_missing_package",
       ].join("\n"),
+      "backend/requirements.txt": "",
+      "backend/repositories/__init__.py": "",
+      ".codex/hook.py": "import repositories\n",
+      "tools/helper.py": "value = 1\n",
+      "tools/run.py": "import helper\n",
+      "tools/inline.py": "# /// script\n# dependencies = [\"PyYAML==6\"]\n# ///\nimport yaml\n",
     },
-    { dependencies: ["declared-package>=1"] },
+    { dependencies: ["declared-package>=1", "python-dotenv>=1", "PyJWT>=2"] },
   );
   const result = await scanPythonFiles(root, ["input.py"]);
   const unresolved = result.findings.filter((finding) => finding.ruleId === "dependency.unresolved");
   assert.equal(unresolved.length, 1);
   assert.match(unresolved[0].message, /surely_missing_package/);
   assert.equal(unresolved[0].confidence, "C2");
+  for (const filePath of [".codex/hook.py", "tools/run.py", "tools/inline.py"]) {
+    assert.equal((await scanPythonFiles(root, [filePath])).findings.some((finding) => finding.ruleId === "dependency.unresolved"), false);
+  }
 });
 
 test("suppresses type-checking, optional, and platform-specific imports", async () => {
@@ -55,6 +66,10 @@ test("suppresses type-checking, optional, and platform-specific imports", async 
       "        import optional_missing",
       "except ImportError:",
       "    optional_missing = None",
+      "try:",
+      "    import broad_optional_missing",
+      "except Exception:",
+      "    broad_optional_missing = None",
       "if sys.platform == 'win32':",
       "    import windows_only_missing",
     ].join("\n"),
@@ -63,12 +78,14 @@ test("suppresses type-checking, optional, and platform-specific imports", async 
   assert.deepEqual(result.findings.filter((finding) => finding.ruleId === "dependency.unresolved"), []);
 });
 
-test("reports Python wrappers only as heuristic observations", async () => {
+test("reports only private production Python wrappers as heuristic observations", async () => {
   const root = project({
     "input.py": [
       "def target(value):",
       "    return value",
-      "def wrapper(value):",
+      "def _wrapper(value):",
+      "    return target(value)",
+      "def public_wrapper(value):",
       "    return target(value)",
       "def transformed(value):",
       "    return target(value.strip())",
@@ -78,16 +95,18 @@ test("reports Python wrappers only as heuristic observations", async () => {
       "def recursive(value):",
       "    return recursive(value)",
     ].join("\n"),
+    "tests/test_input.py": "def _wrapper(value):\n    return target(value)\n",
   });
-  const wrappers = (await scanPythonFiles(root, ["input.py"])).findings.filter(
+  const wrappers = (await scanPythonFiles(root, ["input.py", "tests/test_input.py"])).findings.filter(
     (finding) => finding.ruleId === "structure.pass-through-wrapper",
   );
   assert.equal(wrappers.length, 1);
+  assert.equal(wrappers[0].filePath, "input.py");
   assert.equal(wrappers[0].confidence, "C1");
   assert.equal(wrappers[0].maximumAction, "observe");
 });
 
-test("distinguishes suppressed exceptions, hidden fallbacks, and typed errors", async () => {
+test("distinguishes suppressed exceptions, hidden fallbacks, intentional boundaries, and typed errors", async () => {
   const root = project({
     "input.py": [
       "def empty():",
@@ -100,6 +119,33 @@ test("distinguishes suppressed exceptions, hidden fallbacks, and typed errors", 
       "        return work()",
       "    except Exception as error:",
       "        logger.warning(error)",
+      "def intentional():",
+      "    try:",
+      "        return work()",
+      "    except Exception:  # noqa: BLE001",
+      "        logger.warning('disabled')",
+      "        # Optional telemetry is never fatal.",
+      "def inline_intent():",
+      "    try:",
+      "        telemetry()",
+      "    except Exception:  # telemetry must still never break requests",
+      "        pass",
+      "def _private_fallback():",
+      "    try:",
+      "        return work()",
+      "    except Exception:",
+      "        return 0",
+      "def recurring():",
+      "    while True:",
+      "        try:",
+      "            work()",
+      "        except Exception:",
+      "            logger.warning('retry next iteration')",
+      "if __name__ == '__main__':",
+      "    try:",
+      "        self_check()",
+      "    except ExpectedError:",
+      "        pass",
       "def fallback():",
       "    try:",
       "        return work()",
@@ -111,6 +157,17 @@ test("distinguishes suppressed exceptions, hidden fallbacks, and typed errors", 
       "        return work()",
       "    except Exception as error:",
       "        return {'ok': False, 'error': error}",
+      "def typed_conflict():",
+      "    try:",
+      "        return work()",
+      "    except Conflict:",
+      "        return 0",
+      "def documented_fallback():",
+      "    try:",
+      "        return work()",
+      "    except Exception:",
+      "        return 0",
+      "    # Expected absence retains the prior value.",
       "def rethrow():",
       "    try:",
       "        return work()",
@@ -123,7 +180,7 @@ test("distinguishes suppressed exceptions, hidden fallbacks, and typed errors", 
   assert.equal(findings.filter((finding) => finding.ruleId === "data.hidden-catch-fallback").length, 1);
 });
 
-test("treats explicit predicate true/false outcomes as intentional", async () => {
+test("treats named and annotated boolean fallbacks as intentional predicate outcomes", async () => {
   const root = project({
     "input.py": [
       "def is_inside(root, candidate):",
@@ -131,6 +188,16 @@ test("treats explicit predicate true/false outcomes as intentional", async () =>
       "        candidate.relative_to(root)",
       "        return True",
       "    except ValueError:",
+      "        return False",
+      "def _is_loopback(host):",
+      "    try:",
+      "        return ip_address(host).is_loopback",
+      "    except ValueError:",
+      "        return False",
+      "def readable(path) -> bool:",
+      "    try:",
+      "        return path.is_file()",
+      "    except OSError:",
       "        return False",
     ].join("\n"),
   });
@@ -152,14 +219,14 @@ test("skips generated and syntactically invalid Python", async () => {
 });
 
 test("maps Unicode Python ranges to JavaScript UTF-16 offsets", async () => {
-  const source = "label = '😀'\ndef wrapper(value):\n    return target(value)\n";
+  const source = "label = '😀'\ndef _wrapper(value):\n    return target(value)\n";
   const root = project({ "input.py": source });
   const wrapper = (await scanPythonFiles(root, ["input.py"])).findings.find(
     (finding) => finding.ruleId === "structure.pass-through-wrapper",
   );
   assert.ok(wrapper);
   const disk = readFileSync(path.join(root, "input.py"), "utf8");
-  assert.match(disk.slice(wrapper.start, wrapper.end), /def wrapper/);
+  assert.match(disk.slice(wrapper.start, wrapper.end), /def _wrapper/);
   assert.equal(wrapper.sourceHash.length, 64);
 });
 

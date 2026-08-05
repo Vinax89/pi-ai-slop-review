@@ -12,7 +12,7 @@ import { StateStore } from "../src/core/store.ts";
 import { diagnose, redactSensitive } from "../src/diagnostics.ts";
 import { toMarkdown, toSarif, writeExport } from "../src/export.ts";
 import { importSarif } from "../src/providers/sarif.ts";
-import { formatDelta, formatReport, formatTriage } from "../src/report.ts";
+import { createFindingQueue, formatDelta, formatReport, formatTriage } from "../src/report.ts";
 import type { FindingDraft } from "../src/types.ts";
 
 function fixture(): string {
@@ -115,6 +115,33 @@ test("failed export serialization removes the process temp file for retry", () =
   assert.equal(writeExport(root, result, "json", requestedPath), path.join(root, requestedPath));
 });
 
+test("agent finding queues expose stable IDs, bounded pages, and rule representatives", () => {
+  const root = fixture();
+  const result = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [
+      finding(),
+      { ...finding(), anchor: "second", line: 2, ruleId: "other.rule" },
+      { ...finding(), anchor: "third", line: 3 },
+    ],
+    skipped: [],
+  });
+  const representatives = createFindingQueue(result, { representatives: true });
+  assert.equal(representatives.totalFindings, 3);
+  assert.equal(representatives.queueSize, 2);
+  assert.deepEqual(new Set(representatives.findings.map((item) => item.finding.ruleId)), new Set(["test.rule", "other.rule"]));
+  for (const item of representatives.findings) assert.match(representatives.text, new RegExp(item.finding.id));
+
+  const page = createFindingQueue(result, { limit: 1 });
+  assert.equal(page.findings.length, 1);
+  assert.match(page.text, /Next offset: 1/);
+});
+
 
 test("scan completeness distinguishes complete, partial, and abstained outcomes", () => {
   const root = fixture();
@@ -129,6 +156,18 @@ test("scan completeness distinguishes complete, partial, and abstained outcomes"
     skipped: [],
   });
   assert.equal(complete.completeness?.status, "complete");
+  const expectedExclusions = createScanResult({
+    engine: "provider-federation",
+    engineVersion: "1",
+    rootDir: root,
+    providerId: "test",
+    providerVersion: "1",
+    scannedFiles: ["input.ts"],
+    findings: [],
+    skipped: [{ filePath: "generated.py", reason: "generated or vendor-like file" }],
+  });
+  assert.equal(expectedExclusions.completeness?.status, "complete");
+  assert.equal(expectedExclusions.completeness?.skippedItems, 0);
   const partial = createScanResult({
     engine: "provider-federation",
     engineVersion: "1",
@@ -267,15 +306,15 @@ test("Markdown reports are compact, action-aware, and grounded in linked verific
   const markdown = toMarkdown(result, root);
   assert.ok(markdown.indexOf("data.hidden-catch-fallback") < markdown.indexOf("structure.pass-through-wrapper"));
   assert.match(markdown, /# AI-Slop Review — Human Decision Report/);
-  assert.match(markdown, /\| Decisions required \| 2 \|/);
-  assert.match(markdown, /\| Policy proposals \| 1 \|/);
+  assert.match(markdown, /\| Representative reviews \| 2 \|/);
+  assert.match(markdown, /\| Actionable policy proposals \| 1 \|/);
   assert.match(markdown, /## Human Decision Summary/);
-  assert.match(markdown, /## Decision Queue[\s\S]*\| # \| Finding family \| Candidates \| Priority \| Current disposition \| Missing evidence \| Next action \|/);
+  assert.match(markdown, /## Representative Review Queue[\s\S]*\| # \| Finding family \| Candidates \| Priority \| Current disposition \| Missing evidence \| Next action \|/);
   assert.match(markdown, /\| 1 \| data\.hidden-catch-fallback \| 2 \| 99\/100 \| Observe \(2\) \| runtime behavior \| Trace consumers/);
   assert.match(markdown, /\| 2 \| structure\.pass-through-wrapper \| 1 \| 34\/100 \| Propose \(1\) \| Whether the reported behavior violates the local contract \| Inspect all callers/);
-  assert.equal((markdown.match(/## Decision Outcomes/g) ?? []).length, 1);
-  assert.match(markdown, /## Family Decisions/);
-  assert.match(markdown, /### Decision 1 of 2 — data\.hidden-catch-fallback/);
+  assert.equal((markdown.match(/## Representative Outcomes/g) ?? []).length, 1);
+  assert.match(markdown, /## Representative Reviews/);
+  assert.match(markdown, /### Representative 1 of 2 — data\.hidden-catch-fallback/);
   assert.doesNotMatch(markdown, /## Start Here|## Findings by Family|## Finding Family Playbooks|## Representative Finding Details|## All Returned Candidates/);
   assert.doesNotMatch(markdown, /Critical-priority/);
   assert.match(markdown, /\| Review priority \| 99\/100 \|/);
@@ -284,11 +323,11 @@ test("Markdown reports are compact, action-aware, and grounded in linked verific
   assert.match(markdown, /#### Missing Evidence[\s\S]*No additional evidence gaps were identified beyond the decision question/);
   assert.match(markdown, /#### Next Investigation[\s\S]*\/slop-context input\.ts[\s\S]*tests\/input\.test\.ts[\s\S]*src\/caller\.ts:loadInput[\s\S]*docs\/input\.md/);
   assert.match(markdown, /#### Policy Notes[\s\S]*deterministic policy note/);
-  assert.match(markdown, /#### Record the Decision[\s\S]*\/slop-feedback finding:[a-f0-9]+ accepted <reason>[\s\S]*intentional <reason>[\s\S]*missing-context <reason>[\s\S]*insufficient-evidence <reason>/);
+  assert.match(markdown, /#### Record the Representative Outcome[\s\S]*applies only to this finding[\s\S]*\/slop-feedback finding:[a-f0-9]+ accepted <reason>[\s\S]*intentional <reason>[\s\S]*missing-context <reason>[\s\S]*insufficient-evidence <reason>/);
   assert.match(markdown, /#### Only If Accepted[\s\S]*\*\*Possible remediation\*\*[\s\S]*safe-looking fallback[\s\S]*\*\*Required verification\*\*[\s\S]*tests\/input\.test\.ts/);
   assert.match(markdown, /#### Representative Source[\s\S]*> 1 \| const value = 1;/);
   assert.equal((markdown.match(/#### Representative Source/g) ?? []).length, 2);
-  assert.match(markdown, /\*\*Other occurrences:\*\* 1/);
+  assert.match(markdown, /\*\*Unreviewed family members:\*\* 1/);
   assert.doesNotMatch(markdown, /Duplicate family detail should stay collapsed/);
   assert.match(markdown, /\*\*Summary:\*\* 1 completed, 0 degraded, 0 failed, 0 skipped/);
   assert.doesNotMatch(markdown, /\| Provider \| Status \|/);
@@ -311,6 +350,7 @@ test("human-facing reports expose a plain-language decision summary", () => {
     evidenceRecords: [],
     skipped: [],
   });
+  assert.match(toMarkdown(result), /No code change is supported by this report[\s\S]*applies to one finding, never its whole family/);
   const report = formatReport(result);
   const triage = formatTriage(result);
   assert.match(report, /Human decision required:/);

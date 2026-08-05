@@ -133,6 +133,27 @@ test("reasoned suppressions expire, match their scope, and can be removed", () =
   assert.throws(() => addSuppression(root, { ruleId: "x", reason: "reason", expiresAt: "invalid" }, state), /expiry/);
 });
 
+test("exact human feedback changes only the reviewed finding's authority", () => {
+  const { root, state } = fixture();
+  const draft = {
+    ...wrapper(),
+    ruleId: "data.hidden-catch-fallback",
+    classification: "context_conflict" as const,
+    risk: "R3" as const,
+    maximumAction: "observe" as const,
+  };
+  const observed = applyPolicy(root, result(root, draft), DEFAULT_CONFIG, state).findings[0] as Finding;
+  recordFeedback(root, observed, "accepted", "caller contract verified", ["test-provider"], false, state);
+  let reviewed = applyPolicy(root, result(root, draft), DEFAULT_CONFIG, state);
+  assert.equal(reviewed.findings[0].maximumAction, "propose");
+  assert.match(reviewed.policyDecisions[0].reasons.join(" "), /exact finding accepted/);
+
+  recordFeedback(root, observed, "intentional", "documented compatibility behavior", ["test-provider"], false, state);
+  reviewed = applyPolicy(root, result(root, draft), DEFAULT_CONFIG, state);
+  assert.equal(reviewed.findings[0].maximumAction, "ignore");
+  assert.equal(applyPolicy(root, result(root, { ...draft, sourceHash: "changed" }), DEFAULT_CONFIG, state).findings[0].maximumAction, "observe");
+});
+
 test("feedback health is conservative, privacy-scoped, and disables unsafe rules", () => {
   const { root, state } = fixture();
   const finding = applyPolicy(root, result(root, wrapper()), DEFAULT_CONFIG, state).findings[0] as Finding;

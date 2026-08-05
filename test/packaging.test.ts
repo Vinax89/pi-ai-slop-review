@@ -17,18 +17,19 @@ function packedFiles(): string[] {
 
 test("npm pack contains runtime, schema, documentation, and metadata artifacts", () => {
   const files = packedFiles();
-  for (const required of ["dist/src/isolated-scan.js", "dist/src/python_common.py", "index.ts", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "schema/config.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md", "npm-shrinkwrap.json"]) {
+  for (const required of ["dist/src/isolated-scan.js", "dist/src/python_common.py", "index.ts", "skills/ai-slop-review/SKILL.md", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "schema/config.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md", "npm-shrinkwrap.json"]) {
     assert.ok(files.includes(required), `packed package is missing ${required}`);
   }
   assert.equal(files.some((file) => file.startsWith("test/")), false);
   const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
     engines: { node: string };
-    pi: { extensions: string[] };
+    pi: { extensions: string[]; skills: string[] };
     peerDependencies: Record<string, string>;
     peerDependenciesMeta: Record<string, { optional?: boolean }>;
   };
   assert.equal(packageJson.engines.node, ">=22.7.0");
   assert.deepEqual(packageJson.pi.extensions, ["index.ts"]);
+  assert.deepEqual(packageJson.pi.skills, ["skills/ai-slop-review/SKILL.md"]);
   const declaredPeers = Object.keys(packageJson.peerDependencies).sort();
   assert.deepEqual(declaredPeers, ["@earendil-works/pi-ai", "@earendil-works/pi-tui", "typebox"]);
   for (const peer of declaredPeers) assert.equal(packageJson.peerDependenciesMeta[peer]?.optional, true, `${peer} must be optional`);

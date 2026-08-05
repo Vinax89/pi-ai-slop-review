@@ -28,7 +28,8 @@ function ruleIds(root: string, file: string): string[] {
 
 test("uses TypeScript resolution and ignores Node builtins", () => {
   const root = project({
-    "input.ts": "import fs from 'node:fs';\nimport missing from 'not-a-real-package';\nvoid fs; void missing;\n",
+    "input.ts": "import fs from 'node:fs';\nimport styles from './style.module.css';\nimport missing from 'not-a-real-package';\nvoid fs; void styles; void missing;\n",
+    "style.module.css": ".root { display: block; }\n",
   });
   const result = scanTypeScriptFiles(root, ["input.ts"]);
   const unresolved = result.findings.filter((finding) => finding.ruleId === "dependency.unresolved");
