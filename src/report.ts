@@ -124,30 +124,34 @@ export interface FindingQueuePage {
   queueSize: number;
   offset: number;
   representatives: boolean;
+  reportOnlyOmitted: number;
   findings: RankedFinding[];
 }
 
 export function createFindingQueue(
   result: ScanResult,
-  options: { offset?: number; limit?: number; representatives?: boolean } = {},
+  options: { offset?: number; limit?: number; representatives?: boolean; reportOnly?: readonly string[] } = {},
 ): FindingQueuePage {
   const ranked = rankFindings(result.findings, result.policyDecisions);
+  const reportOnly = new Set(options.reportOnly ?? []);
+  const eligible = reportOnly.size ? ranked.filter((item) => !reportOnly.has(item.finding.ruleId)) : ranked;
   const seenRules = new Set<string>();
   const queue = options.representatives
-    ? ranked.filter((item) => {
+    ? eligible.filter((item) => {
         if (seenRules.has(item.finding.ruleId)) return false;
         seenRules.add(item.finding.ruleId);
         return true;
       })
-    : ranked;
+    : eligible;
   const offset = Math.max(0, Math.trunc(options.offset ?? 0));
   const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)));
   const findings = queue.slice(offset, offset + limit);
   const completeness = result.completeness ?? assessScanCompleteness(result);
+  const reportOnlyOmitted = ranked.length - eligible.length;
   const lines = [
     "AI-SLOP FINDING QUEUE",
     `Static scan: ${completeness.status} — ${result.scannedFiles.length} files, ${ranked.length} candidates, ${result.skipped.length} skipped`,
-    `Queue: ${findings.length} shown from ${queue.length}${options.representatives ? " rule-family representatives" : " ranked candidates"}; offset ${offset}`,
+    `Queue: ${findings.length} shown from ${queue.length}${options.representatives ? " rule-family representatives" : " ranked candidates"}; offset ${offset}${reportOnlyOmitted ? `; ${reportOnlyOmitted} report-only candidate(s) omitted (${[...reportOnly].join(", ")})` : ""}`,
     ...findings.map((item) => `- ${item.finding.id} | priority ${item.score}/100 | ${item.finding.ruleId} | ${item.finding.filePath}:${item.finding.line}:${item.finding.column}\n  ${item.finding.message}`),
   ];
   if (offset + findings.length < queue.length) lines.push(`Next offset: ${offset + findings.length}`);
@@ -157,6 +161,7 @@ export function createFindingQueue(
     queueSize: queue.length,
     offset,
     representatives: Boolean(options.representatives),
+    reportOnlyOmitted,
     findings,
   };
 }
@@ -222,4 +227,75 @@ export function formatDelta(delta: ScanDelta, maxFindings = 20): string {
   const total = delta.added.length + delta.changed.length + delta.resolved.length;
   if (total > totalListed) lines.push("", `${total - totalListed} delta item(s) omitted`);
   return lines.join("\n");
+}
+
+export interface ParsedVerdictLine {
+  findingId: string;
+  ruleId: string;
+  filePath: string;
+  line: number;
+  text: string;
+}
+
+export interface VerdictLineParse {
+  verdicts: ParsedVerdictLine[];
+  violations: string[];
+}
+
+const VERDICT_LINE_PATTERN = /^finding:([0-9a-f]+) \| ([a-z0-9.-]+) \| ([^:]+):(\d+)(?::\d+)? — (.*)$/;
+
+/**
+ * Parse skill verdict lines in the `finding ID | rule ID | path:line — text`
+ * contract. Structural violations (unparseable lines, duplicate IDs) are
+ * reported separately so callers can distinguish format errors from verdicts.
+ */
+export function parseVerdictLines(lines: string[]): VerdictLineParse {
+  const verdicts: ParsedVerdictLine[] = [];
+  const violations: string[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const match = VERDICT_LINE_PATTERN.exec(trimmed);
+    if (!match) {
+      violations.push(`unparseable verdict line: ${trimmed}`);
+      continue;
+    }
+    const findingId = `finding:${match[1]}`;
+    if (seen.has(findingId)) violations.push(`duplicate verdict for finding ${findingId}`);
+    seen.add(findingId);
+    verdicts.push({ findingId, ruleId: match[2], filePath: match[3], line: Number(match[4]), text: match[5] });
+  }
+  return { verdicts, violations };
+}
+
+/**
+ * Verify verdict lines against the latest scan result: every ID must exist in
+ * the review, rule ID and path:line must match the finding, no duplicates, and
+ * the verdict count must equal the adjudicated total when supplied.
+ */
+export function verifyVerdicts(
+  lines: string[],
+  result: ScanResult,
+  adjudicatedTotal?: number,
+): { valid: boolean; violations: string[] } {
+  const { verdicts, violations } = parseVerdictLines(lines);
+  const byId = new Map(result.findings.map((finding) => [finding.id, finding]));
+  for (const verdict of verdicts) {
+    const finding = byId.get(verdict.findingId);
+    if (!finding) {
+      violations.push(`finding ID ${verdict.findingId} is not in the latest review`);
+      continue;
+    }
+    if (finding.ruleId !== verdict.ruleId) {
+      violations.push(`finding ${verdict.findingId}: rule ID mismatch (line says ${verdict.ruleId}, review says ${finding.ruleId})`);
+    }
+    if (finding.filePath !== verdict.filePath || finding.line !== verdict.line) {
+      violations.push(`finding ${verdict.findingId}: location mismatch (line says ${verdict.filePath}:${verdict.line}, review says ${finding.filePath}:${finding.line})`);
+    }
+  }
+  if (adjudicatedTotal !== undefined && verdicts.length !== adjudicatedTotal) {
+    violations.push(`verdict count ${verdicts.length} does not match adjudicated total ${adjudicatedTotal}`);
+  }
+  return { valid: violations.length === 0, violations };
 }

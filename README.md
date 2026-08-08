@@ -21,7 +21,7 @@ pi -e npm:pi-ai-slop-review
 A version-tagged Git installation is also supported:
 
 ```bash
-pi install git:github.com/Vinax89/pi-ai-slop-review@v1.3.0
+pi install git:github.com/Vinax89/pi-ai-slop-review@v1.4.0
 ```
 
 Pi packages execute code with the user's privileges. Review the source and [`docs/security.md`](docs/security.md) before installation.
@@ -63,7 +63,7 @@ Raw extension commands remain available for deterministic scanning, state, and d
 - `/slop-experiment` runs bounded pure-expression property, metamorphic, shadow, mutation, invariant, regression-generation, equality-saturation, and CEGIS checks.
 - `/slop-formal` runs explicitly enabled SMT expression equivalence or Alive2-compatible LLVM translation validation through exact configured, network-isolated commands.
 - `/slop-retrieve` ranks local graph context without uploading source. `/slop-critics` is an opt-in remote advisory panel whose non-abstaining responses must cite existing deterministic evidence IDs.
-- The `slop_review`, `slop_findings`, `slop_context`, `slop_intent`, `slop_provenance`, `slop_clusters`, `slop_propose`, `slop_verify`, `slop_experiment`, `slop_formal`, `slop_retrieve`, and `slop_critics` tools expose the same capabilities to the agent. `slop_review` accepts session, explicit-path, or repository scope; `slop_findings` provides stable IDs, bounded pagination, and one representative per detector family. Agent tools never apply patches to the real checkout.
+- The `slop_review`, `slop_findings`, `slop_context`, `slop_intent`, `slop_verdicts`, `slop_record_verdicts`, `slop_verify_verdicts`, `slop_provenance`, `slop_clusters`, `slop_propose`, `slop_verify`, `slop_experiment`, `slop_formal`, `slop_retrieve`, and `slop_critics` tools expose the same capabilities to the agent. `slop_review` accepts session, explicit-path, or repository scope, plus `delta` for a git-HEAD-scoped repository audit; `slop_findings` provides stable IDs, bounded pagination, one representative per detector family, and omits report-only families (`assurance.no-linked-tests`) unless requested. `slop_verdicts`/`slop_record_verdicts` maintain a review-history ledger that later reviews classify as new/same/stale/resolved; `slop_verify_verdicts` enforces the verdict output contract. `/slop-verdict-feedback` converts a stored verdict into policy feedback only after an explicit human confirmation. Agent tools never apply patches to the real checkout.
 
 The scanner federates a TypeScript `Program`/`TypeChecker`, an isolated Python stdlib AST helper, explicitly trusted language servers, SARIF 2.1, ESLint/Ruff/Pyright/Knip reports, LCOV/coverage.py reports, and local dependency provenance. It reports:
 

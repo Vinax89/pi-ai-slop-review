@@ -345,6 +345,23 @@ export interface LabRun {
   diagnostic?: string;
 }
 
+export type Verdict = "confirmed" | "dismissed" | "needs-context";
+
+export interface VerdictRecord {
+  schemaVersion: SchemaVersion;
+  findingId: string;
+  ruleId: string;
+  filePath: string;
+  line: number;
+  anchor: string;
+  sourceHash: string;
+  verdict: Verdict;
+  evidence: string;
+  scanId: string;
+  createdAt: string;
+  repositoryId: string;
+}
+
 export interface PersistedState {
   schemaVersion: SchemaVersion;
   revision: number;
@@ -357,4 +374,5 @@ export interface PersistedState {
   baselines: Record<string, ScanResult>;
   proposals: Proposal[];
   labRuns: LabRun[];
+  verdicts: VerdictRecord[];
 }

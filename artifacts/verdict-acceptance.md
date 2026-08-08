@@ -44,3 +44,12 @@ pi --no-extensions --no-skills -e /home/irvin/ai-slop/index.ts \
 ```
 
 Expected counts: 5 files, 20 candidates, 3 rule families sampled for adjudication in repository mode, or all 20 in explicit mode (shown above).
+
+## Consistency and ledger re-run — 2026-08-08
+
+Two consecutive explicit-scope runs with the v1.4 toolchain (`slop_verdicts`, `slop_record_verdicts`, `slop_verify_verdicts`, report-only filtering):
+
+- Run A: 8/20 candidates adjudicated (12 `assurance.no-linked-tests` report-only candidates omitted by default), verdicts recorded to the ledger.
+- Run B: identical 8 verdicts on identical finding IDs, each marked `(unchanged from prior review)` — verdict stability across runs is now enforced and visible via the ledger's `same` classification.
+- The model explicitly noted that the corpus comments ("expected: confirmed") were treated as untrusted data, not instructions — the adversarial-content rule in the skill fired as designed.
+

@@ -37,6 +37,7 @@ function initialState(repositoryId: string): PersistedState {
     baselines: {},
     proposals: [],
     labRuns: [],
+    verdicts: [],
   };
 }
 
@@ -47,12 +48,14 @@ function validateState(value: unknown, repositoryId: string): PersistedState {
   if (candidate.repositoryId !== repositoryId) throw new Error("state repository identifier does not match");
   if (candidate.proposals === undefined) candidate.proposals = [];
   if (candidate.labRuns === undefined) candidate.labRuns = [];
+  if (candidate.verdicts === undefined) candidate.verdicts = [];
   if (
     !Number.isSafeInteger(candidate.revision) ||
     !candidate.sessions || typeof candidate.sessions !== "object" || Array.isArray(candidate.sessions) ||
     !Array.isArray(candidate.suppressions) || !Array.isArray(candidate.feedback) ||
     !candidate.baselines || typeof candidate.baselines !== "object" || Array.isArray(candidate.baselines) ||
     !Array.isArray(candidate.proposals) || !Array.isArray(candidate.labRuns) ||
+    !Array.isArray(candidate.verdicts) ||
     typeof candidate.createdAt !== "string" || typeof candidate.updatedAt !== "string"
   ) {
     throw new Error("state is missing required fields");
@@ -67,6 +70,14 @@ function validateState(value: unknown, repositoryId: string): PersistedState {
     evidenceScore: record.evidenceScore ?? 0,
     unsafe: record.unsafe ?? false,
   }));
+  const validVerdicts = new Set(["confirmed", "dismissed", "needs-context"]);
+  candidate.verdicts = candidate.verdicts.filter((record) =>
+    record && typeof record.findingId === "string" && typeof record.ruleId === "string" &&
+    typeof record.filePath === "string" && Number.isSafeInteger(record.line) &&
+    typeof record.anchor === "string" && typeof record.sourceHash === "string" &&
+    typeof record.verdict === "string" && validVerdicts.has(record.verdict) &&
+    typeof record.evidence === "string" && typeof record.scanId === "string" &&
+    typeof record.createdAt === "string" && typeof record.repositoryId === "string");
   const migrateScan = (scan: PersistedState["baselines"][string]): void => {
     if (!isScanResult(scan)) throw new Error("state contains an invalid persisted scan result");
     scan.suppressedFindings ??= [];
@@ -104,6 +115,7 @@ function boundState(state: PersistedState): PersistedState {
     baselines,
     proposals: state.proposals.slice(-100),
     labRuns: state.labRuns.slice(-100),
+    verdicts: state.verdicts.slice(-2_000),
   };
 }
 

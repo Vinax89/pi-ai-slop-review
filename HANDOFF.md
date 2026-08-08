@@ -187,6 +187,21 @@ Workflow accepted; v1.3.0 prepared and committed (commit `7f21bca`, tag `v1.3.0`
 
 Published: `pi-ai-slop-review@1.3.0` is `latest` on the npm registry (maintainer `vinbitz`, 311.8 kB tarball, 138 files — `skills/ai-slop-review/SKILL.md` and `dist/src/isolated-scan.js` included, `artifacts/verdict-corpus/` excluded). Tarball: `https://registry.npmjs.org/pi-ai-slop-review/-/pi-ai-slop-review-1.3.0.tgz`. Publish required an interactive browser login plus 2FA OTP; the earlier `~/.npmrc` token was rejected (401/404).
 
+## Feature batch (unreleased, candidate v1.4.0)
+
+Eight improvement items from the post-release review, all implemented and verified:
+
+1. **Verdict instability** — skill now biases toward `confirmed`/`dismissed` with explicit evidence-sufficiency thresholds (`needs-context` only as a last resort, not a hedge). Verified: two consecutive corpus runs produced identical verdicts for all 8 findings.
+2. **Mechanical verdict validation** — `slop_verify_verdicts` tool + `verifyVerdicts`/`parseVerdictLines` in `src/report.ts`: enforces finding IDs exist, rule IDs and path:line match, no duplicate IDs, and verdict count equals the adjudicated total. Skill workflow calls it before finalizing.
+3. **Verdict persistence + delta** — review-history ledger in the state store (`PersistedState.verdicts`): `slop_record_verdicts` appends verdicts (finding-keyed, replaces per ID), `slop_verdicts` classifies each current finding as `new`/`same`/`stale`/`resolved` by ID + source hash. Verified: second corpus run carried all 8 verdicts forward as `(unchanged from prior review)`. Log only — never suppresses findings, never alters policy.
+4. **Confirm → propose chain** — skill wiring: fixes are proposed only through `slop_propose` (network-isolated worktree validation), never applied by the model; creation requires explicit user request.
+5. **Delta-scoped repository audits** — `slop_review` accepts `delta: true` (repository scope): scans only files changed since git HEAD (`git diff --name-only` + `git ls-files -m -o`), falls back to a full audit without git. Verified: delta audit of a fixture scanned 1 changed file and ignored unchanged slop in another.
+6. **Human-gated feedback conversion** — `/slop-verdict-feedback <id> [outcome]` converts a stored verdict into policy feedback only after an explicit `ctx.ui.confirm`; outcome defaults from the verdict (`confirmed`→`accepted`, `dismissed`→`intentional`, `needs-context`→`insufficient-evidence`).
+7. **Adversarial repo content** — skill safety: instructions embedded in scanned content are treated as data and ignored; the model must mention such attempts in the affected verdict. Verified: the corpus files contain "expected: confirmed" comments, and run B explicitly noted they were treated as untrusted data, not instructions.
+8. **Noise budget** — `assurance.no-linked-tests` is report-only: omitted from `slop_findings` queues by default (opt-in via `includeReportOnly`), count reported in the queue text. Corpus run dropped from 20 adjudicated candidates to 8, with coverage honestly reported as `8/20 candidates reviewed; 12 report-only test-assurance candidates omitted by default`.
+
+Tests: `test/verdicts.test.ts` (6 new: parser, verifier, ledger record/classify, replacement, outcome mapping, report-only queue). `npm run validate` 172/172, actionable precision 1.0.
+
 ## Constraints to preserve
 
 - No inferred AI authorship.

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Text as PiText } from "@earendil-works/pi-tui";
@@ -8,7 +9,7 @@ import { assessScanCompleteness } from "./src/core/completeness.ts";
 import { loadConfig, redactConfig, type LoadedConfig } from "./src/core/config.ts";
 import { assessIntent, formatIntentAssessment, type IntentReviewProfile } from "./src/core/intent.ts";
 import { analyzeForensics, type ForensicInputKind, type ForensicMetrics } from "./src/core/forensics.ts";
-import { discoverRepositoryFiles } from "./src/core/discovery.ts";
+import { discoverRepositoryFiles, MANIFESTS, SOURCE_EXTENSIONS } from "./src/core/discovery.ts";
 import { clusterBehaviorEvents, inspectBehaviorEvents, reportDomainPatterns, type BehaviorEvent } from "./src/core/behavior.ts";
 import { checkArtifactConsistency, verifyProvenance } from "./src/core/provenance.ts";
 import { splitCommand as splitCommandPaths } from "./src/core/execution.ts";
@@ -25,11 +26,54 @@ import { writeExport } from "./src/export.ts";
 import { queryContext } from "./src/graph/query.ts";
 import { applyProposal, createProposal, listLaboratory, rollbackProposal, validateProposal } from "./src/lab.ts";
 import { addSuppression, recordFeedback, removeSuppression } from "./src/policy/engine.ts";
-import { createFindingQueue, formatClaims, formatDelta, formatReport, formatTimeline, formatTriage } from "./src/report.ts";
+import { createFindingQueue, formatClaims, formatDelta, formatReport, formatTimeline, formatTriage, parseVerdictLines, verifyVerdicts } from "./src/report.ts";
 import { scanFilesIsolated } from "./src/isolated-scan.ts";
+import { classifyVerdicts, recordVerdicts, verdictLedger, verdictToFeedbackOutcome, type VerdictEntry } from "./src/verdicts.ts";
 import type { ClaimAssessment, ExperimentSpec, FeedbackRecord, Finding, LedgerEvent, ScanResult, ScanScope } from "./src/types.ts";
 
 const DISABLED = existsSync(fileURLToPath(new URL(".disabled", import.meta.url)));
+
+const REPORT_ONLY_RULES = ["assurance.no-linked-tests"] as const;
+
+/**
+ * Project-relative source paths changed since git HEAD (tracked modifications
+ * plus untracked files), or undefined when git is unavailable or has no HEAD.
+ */
+function changedSinceHead(rootDir: string): string[] | undefined {
+  try {
+    const run = (args: string[]): string[] => {
+      const output = execFileSync("git", args, { cwd: rootDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      return output.split("\0").filter(Boolean);
+    };
+    const changed = new Set([...run(["diff", "--name-only", "-z", "HEAD"]), ...run(["ls-files", "-m", "-o", "--exclude-standard", "-z"])]);
+    return [...changed]
+      .filter((filePath) => SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()) || MANIFESTS.has(path.basename(filePath)))
+      .sort();
+  } catch {
+    return undefined;
+  }
+}
+
+function formatVerdictDelta(delta: ReturnType<typeof classifyVerdicts>, prefix?: string): string {
+  const selected = prefix
+    ? delta.findings.filter((item) => item.finding.id === prefix || item.finding.id.startsWith(prefix))
+    : delta.findings;
+  const counts = { new: 0, same: 0, stale: 0 };
+  const lines = ["AI-SLOP VERDICT LEDGER"];
+  for (const { finding, classification } of selected) {
+    if (classification.status === "new") {
+      counts.new += 1;
+      lines.push(`- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — NEW (no prior verdict)`);
+    } else {
+      const label = classification.status === "same" ? "same" : "stale";
+      counts[label] += 1;
+      lines.push(`- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — ${label}: ${classification.record.verdict} (${classification.record.createdAt.slice(0, 10)})${classification.status === "stale" ? " — code changed since verdict" : ""}\n  ${classification.record.evidence}`);
+    }
+  }
+  lines.push(`Ledger: ${counts.new} new, ${counts.same} same, ${counts.stale} stale${delta.resolved.length ? `, ${delta.resolved.length} resolved` : ""}`);
+  if (prefix && selected.length !== delta.findings.length) lines.push(`Use an exact finding ID for full details; ${delta.findings.length - selected.length} other finding(s) omitted.`);
+  return lines.join("\n");
+}
 
 const FORENSIC_SOURCE_EXTENSIONS = new Set([
   ".c", ".cc", ".cpp", ".css", ".go", ".h", ".hpp", ".html", ".java", ".js", ".jsx", ".json", ".md", ".mjs", ".py", ".rb", ".rs", ".sh", ".sql", ".swift", ".ts", ".tsx", ".txt", ".vue", ".xml", ".yaml", ".yml",
@@ -553,6 +597,41 @@ export default async function (pi: any): Promise<void> {
     },
   });
 
+  pi.registerCommand("slop-verdict-feedback", {
+    description: "Convert a stored AI verdict into human-gated local feedback for a latest-review finding",
+    handler: async (args: string, ctx: any) => {
+      ensureInitialized(ctx);
+      const tokens = splitCommandPaths(args);
+      const prefix = tokens.shift();
+      const requested = tokens.shift() as FeedbackRecord["outcome"] | undefined;
+      const valid = new Set<FeedbackRecord["outcome"]>([
+        "accepted", "intentional", "wrong-location", "missing-context", "duplicate", "unsafe-proposal", "insufficient-evidence", "local-convention",
+      ]);
+      if (!prefix || (requested && !valid.has(requested))) {
+        ctx.ui.notify("Usage: /slop-verdict-feedback <finding-id-prefix> [outcome] (outcome defaults from the stored verdict)", "warning");
+        return;
+      }
+      try {
+        const finding = findingByPrefix(prefix);
+        const stored = verdictLedger(ctx.cwd).find((record) => record.findingId === finding.id);
+        if (!stored) {
+          ctx.ui.notify("No stored verdict for this finding; run the skill review with verdict recording first, or use /slop-feedback directly", "warning");
+          return;
+        }
+        const outcome = requested ?? verdictToFeedbackOutcome(stored.verdict);
+        const confirmed = await ctx.ui.confirm("Record human feedback from AI verdict?", `${finding.ruleId} at ${finding.filePath}:${finding.line}\nAI verdict: ${stored.verdict} (${stored.createdAt.slice(0, 10)})\nEvidence: ${stored.evidence}\nFeedback outcome: ${outcome}`);
+        if (!confirmed) return;
+        const providers = lastOutcome!.result.evidenceRecords
+          .filter((item) => finding.evidenceIds.includes(item.id) || item.source?.filePath === finding.filePath)
+          .map((item) => item.providerId);
+        const feedback = recordFeedback(ctx.cwd, finding, outcome, `AI verdict, human-confirmed: ${stored.evidence}`, providers, outcome === "unsafe-proposal");
+        ctx.ui.notify(`Local feedback recorded: ${feedback.id}`, "info");
+      } catch (error) {
+        ctx.ui.notify((error as Error).message, "error");
+      }
+    },
+  });
+
   pi.registerCommand("slop-rules", {
     description: "Show policy decisions and local rule-health calibration",
     handler: async (_args: string, ctx: any) => {
@@ -824,12 +903,15 @@ export default async function (pi: any): Promise<void> {
           maxItems: 100,
         }),
       ),
+      delta: Type.Optional(Type.Boolean({
+        description: "With repository scope, scan only files changed since git HEAD; falls back to a full audit when git is unavailable",
+      })),
       claims: Type.Optional(Type.String({ description: "Optional completion or review claims to verify against session evidence" })),
     }),
 
     async execute(
       _toolCallId: string,
-      params: { scope?: "session" | "repository"; paths?: string[]; claims?: string },
+      params: { scope?: "session" | "repository"; paths?: string[]; delta?: boolean; claims?: string },
       signal: AbortSignal | undefined,
       onUpdate: ((update: { content: Array<{ type: "text"; text: string }> }) => void) | undefined,
       ctx: { cwd: string; ui: { setStatus(name: string, status: string): void } },
@@ -840,10 +922,20 @@ export default async function (pi: any): Promise<void> {
       let paths = params.paths?.length ? params.paths : undefined;
       const mode: ScanScope["mode"] = paths ? "explicit" : params.scope ?? "session";
       let discoveryTruncated = false;
+      let deltaScope = false;
       if (mode === "repository") {
-        const discovery = discoverRepositoryFiles(ctx.cwd, loadedConfig!.config.limits.maxFiles);
-        paths = discovery.paths;
-        discoveryTruncated = discovery.truncated;
+        if (params.delta) {
+          const changed = changedSinceHead(ctx.cwd);
+          if (changed?.length) {
+            paths = changed;
+            deltaScope = true;
+          }
+        }
+        if (!paths) {
+          const discovery = discoverRepositoryFiles(ctx.cwd, loadedConfig!.config.limits.maxFiles);
+          paths = discovery.paths;
+          discoveryTruncated = discovery.truncated;
+        }
       }
       const pathCount = paths?.length ?? trackedPaths().length;
       if (!pathCount) {
@@ -854,8 +946,11 @@ export default async function (pi: any): Promise<void> {
           details: undefined,
         };
       }
-      onUpdate?.({ content: [{ type: "text", text: `${mode === "repository" ? "Auditing" : "Reviewing"} ${pathCount} file(s)...` }] });
+      onUpdate?.({ content: [{ type: "text", text: deltaScope
+        ? `Auditing ${pathCount} changed file(s) since HEAD (delta)...`
+        : `${mode === "repository" ? "Auditing" : "Reviewing"} ${pathCount} file(s)...` }] });
       const outcome = await review(ctx.cwd, paths, signal, params.claims, mode, discoveryTruncated);
+      if (deltaScope) outcome.warnings.push("repository delta audit scoped to files changed since git HEAD");
       if (discoveryTruncated) outcome.warnings.push(`repository discovery stopped at ${loadedConfig!.config.limits.maxFiles} files; result completeness is partial`);
       lastOutcome = outcome;
       ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} findings · ${outcome.delta.added.length} new`);
@@ -891,10 +986,11 @@ export default async function (pi: any): Promise<void> {
       offset: Type.Optional(Type.Number({ description: "Zero-based ranked queue offset" })),
       limit: Type.Optional(Type.Number({ description: "Page size from 1 to 20" })),
       representatives: Type.Optional(Type.Boolean({ description: "Return only the highest-ranked finding from each rule family" })),
+      includeReportOnly: Type.Optional(Type.Boolean({ description: "Include report-only families (assurance.no-linked-tests) that are omitted by default" })),
     }),
     async execute(
       _toolCallId: string,
-      params: { findingId?: string; offset?: number; limit?: number; representatives?: boolean },
+      params: { findingId?: string; offset?: number; limit?: number; representatives?: boolean; includeReportOnly?: boolean },
       signal: AbortSignal | undefined,
     ) {
       if (signal?.aborted) throw new Error("AI-slop finding retrieval cancelled");
@@ -903,7 +999,10 @@ export default async function (pi: any): Promise<void> {
         const finding = findingByPrefix(params.findingId);
         return { content: [{ type: "text", text: findingDetails(finding) }], details: finding };
       }
-      const page = createFindingQueue(lastOutcome.result, params);
+      const page = createFindingQueue(lastOutcome.result, {
+        ...params,
+        reportOnly: params.includeReportOnly ? [] : REPORT_ONLY_RULES,
+      });
       return {
         content: [{ type: "text", text: page.text }],
         details: page,
@@ -917,6 +1016,100 @@ export default async function (pi: any): Promise<void> {
       const text = result.content?.[0]?.text ?? "No finding details";
       const count = result.details?.findings?.length;
       return new Text(theme.fg("info", expanded || count === undefined ? text : `${count} finding(s) returned`), 0, 0);
+    },
+  });
+
+  pi.registerTool({
+    name: "slop_verdicts",
+    label: "AI-slop verdict ledger",
+    description: "Read stored AI-adjudication verdicts for the latest review, classified new (never adjudicated), same (prior verdict applies, code unchanged), stale (code changed since the verdict), and resolved (finding no longer present).",
+    promptSnippet: "Check prior adjudication verdicts before re-reviewing findings",
+    promptGuidelines: [
+      "Consult the ledger before adjudicating: a same verdict with unchanged source hash can be carried forward; a stale verdict requires re-adjudication.",
+      "The ledger is a review-history log; it never suppresses findings or alters policy.",
+    ],
+    parameters: Type.Object({
+      findingId: Type.Optional(Type.String({ description: "Exact finding ID or unique prefix to inspect" })),
+    }),
+    async execute(_toolCallId: string, params: { findingId?: string }, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {
+      ensureInitialized(ctx);
+      if (signal?.aborted) throw new Error("AI-slop verdict retrieval cancelled");
+      if (!lastOutcome) throw new Error("Run slop_review before requesting verdicts");
+      const delta = classifyVerdicts(lastOutcome.result.findings, verdictLedger(ctx.cwd));
+      const text = formatVerdictDelta(delta, params.findingId);
+      return { content: [{ type: "text", text }], details: delta };
+    },
+    renderCall(args: { findingId?: string }, theme: { fg(color: string, text: string): string; bold(text: string): string }) {
+      return new Text(theme.fg("toolTitle", theme.bold("slop_verdicts ")) + theme.fg("muted", args.findingId ?? "all findings"), 0, 0);
+    },
+    renderResult(result: any, { expanded }: { expanded: boolean }, theme: any) {
+      const delta = result.details as ReturnType<typeof classifyVerdicts> | undefined;
+      const counts = delta ? { new: 0, same: 0, stale: 0 } : undefined;
+      delta?.findings.forEach((item) => { if (counts) counts[item.classification.status] += 1; });
+      const summary = delta ? `${counts!.new} new, ${counts!.same} same, ${counts!.stale} stale${delta.resolved.length ? `, ${delta.resolved.length} resolved` : ""}` : "No verdict ledger";
+      return new Text(theme.fg("info", expanded && delta ? formatVerdictDelta(delta) : summary), 0, 0);
+    },
+  });
+
+  pi.registerTool({
+    name: "slop_record_verdicts",
+    label: "AI-slop verdict recording",
+    description: "Append the AI adjudication outcome for latest-review findings to the review ledger. Log only: never suppresses findings and never alters policy decisions.",
+    promptSnippet: "Persist adjudication verdicts so later reviews can report what changed",
+    promptGuidelines: [
+      "Record one verdict per finding you adjudicated, with concrete evidence from the review.",
+      "This is a review-history log. To convert verdicts into policy feedback, a human uses /slop-verdict-feedback.",
+    ],
+    parameters: Type.Object({
+      entries: Type.Array(Type.Object({
+        findingId: Type.String({ description: "Exact finding ID from the latest review" }),
+        verdict: Type.String({ description: "confirmed, dismissed, or needs-context" }),
+        evidence: Type.String({ description: "Concrete source, caller, contract, or test evidence for the verdict" }),
+      })),
+    }),
+    async execute(_toolCallId: string, params: { entries: Array<{ findingId: string; verdict: string; evidence: string }> }, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {
+      ensureInitialized(ctx);
+      if (signal?.aborted) throw new Error("AI-slop verdict recording cancelled");
+      if (!lastOutcome) throw new Error("Run slop_review before recording verdicts");
+      const count = recordVerdicts(ctx.cwd, lastOutcome.result, params.entries as VerdictEntry[]);
+      return { content: [{ type: "text", text: `Recorded ${count} verdict(s) in the review ledger (log only; no suppression or policy effect).` }], details: { count } };
+    },
+    renderCall(_args: unknown, theme: { fg(color: string, text: string): string; bold(text: string): string }) {
+      return new Text(theme.fg("toolTitle", theme.bold("slop_record_verdicts ")), 0, 0);
+    },
+    renderResult(result: any, _options: unknown, theme: any) {
+      return new Text(theme.fg("info", String(result.details?.count ?? 0) + " verdict(s) recorded"), 0, 0);
+    },
+  });
+
+  pi.registerTool({
+    name: "slop_verify_verdicts",
+    label: "AI-slop verdict validation",
+    description: "Validate verdict lines against the latest review before the final response: finding IDs must exist, rule IDs and path:line must match, IDs must not repeat, and the count must equal the adjudicated total.",
+    promptSnippet: "Verify the verdict output contract before finalizing a review",
+    promptGuidelines: [
+      "Call this with your full verdict block before writing the final response; fix every reported violation.",
+      "One verdict line per finding ID, in the exact format finding ID | rule ID | path:line.",
+    ],
+    parameters: Type.Object({
+      verdictLines: Type.Array(Type.String({ description: "Verdict lines in the form finding ID | rule ID | path:line — text" })),
+      adjudicatedTotal: Type.Optional(Type.Number({ description: "Number of candidates you adjudicated (N in the coverage line)" })),
+    }),
+    async execute(_toolCallId: string, params: { verdictLines: string[]; adjudicatedTotal?: number }, signal: AbortSignal | undefined) {
+      if (signal?.aborted) throw new Error("AI-slop verdict validation cancelled");
+      if (!lastOutcome) throw new Error("Run slop_review before verifying verdicts");
+      const outcome = verifyVerdicts(params.verdictLines, lastOutcome.result, params.adjudicatedTotal);
+      const text = outcome.valid
+        ? `VALID: ${parseVerdictLines(params.verdictLines).verdicts.length} verdict line(s) match the latest review.`
+        : `INVALID — fix before finalizing:\n${outcome.violations.join("\n")}`;
+      return { content: [{ type: "text", text }], details: outcome };
+    },
+    renderCall(_args: unknown, theme: { fg(color: string, text: string): string; bold(text: string): string }) {
+      return new Text(theme.fg("toolTitle", theme.bold("slop_verify_verdicts ")), 0, 0);
+    },
+    renderResult(result: any, _options: unknown, theme: any) {
+      const outcome = result.details as { valid: boolean; violations: string[] } | undefined;
+      return new Text(theme.fg(outcome?.valid ? "success" : "warning", outcome?.valid ? "verdicts valid" : `${outcome?.violations.length ?? 0} violation(s)`), 0, 0);
     },
   });
 

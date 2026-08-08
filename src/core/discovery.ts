@@ -1,9 +1,9 @@
 import { readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
-const EXCLUDED_DIRECTORIES = new Set([".git", ".hg", ".svn", ".venv", ".next", "venv", "node_modules", "dist", "build", "coverage", "vendor"]);
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py", ".md"]);
-const MANIFESTS = new Set(["package.json", "pyproject.toml"]);
+export const EXCLUDED_DIRECTORIES = new Set([".git", ".hg", ".svn", ".venv", ".next", "venv", "node_modules", "dist", "build", "coverage", "vendor"]);
+export const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".py", ".md"]);
+export const MANIFESTS = new Set(["package.json", "pyproject.toml"]);
 
 export function discoverRepositoryFiles(rootDir: string, maxFiles: number): { paths: string[]; truncated: boolean } {
   const root = realpathSync(rootDir);
