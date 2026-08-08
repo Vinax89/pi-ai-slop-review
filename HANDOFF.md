@@ -117,41 +117,67 @@ Observed model result:
 
 The process emitted the complete response but did not exit before the run was cancelled. Treat non-interactive shutdown as the first remaining issue.
 
-## Remaining work
+## Resolved
 
-### 1. Fix non-interactive Pi shutdown
+### 1. Non-interactive Pi shutdown
 
-The local extension uses a reusable isolated scan worker. Determine whether that worker keeps `pi -p` alive after the model response. Add the smallest lifecycle cleanup only if reproduced; do not disable worker reuse for interactive sessions.
+Root cause: the reusable scan worker is a `fork()` child whose IPC pipe is a separate ref'd handle — `ChildProcess.unref()` unrefs the process handle but not the pipe, so an idle worker kept `pi -p`'s event loop alive after the model response.
+
+Fix: `ScanTransport.unref()`/`ref()` (`src/isolated-scan.ts`) also unref/ref `child.channel`. Reuse is unchanged while the parent lives; when the loop drains, the process exits and the pipe dies with it, so no orphaned child remains.
+
+Verified:
+
+- Real skill smoke (`pi --no-extensions --no-skills -e index.ts --skill …/SKILL.md --no-session --approve -p "/skill:ai-slop-review input.ts"`): full response emitted, exit code 0, no worker orphan.
+- Regression test `an idle isolated worker does not keep the parent process alive` (spawns a process that scans without `resetIsolatedScanWorker`); fails with SIGTERM timeout without the fix, passes with it.
+- Worker reuse intact: cache-hit/reuse tests in `test/scan.test.ts` still pass (16/16); full `npm run validate` 166/166, actionable precision 1.0.
 
 ### 2. Disambiguate verdict output
 
-The smoke response listed multiple candidates at the same source line without IDs/rule names. Update the skill output contract so every verdict includes:
+Every verdict line now starts with the finding's exact ID, rule ID, and location as returned by `slop_findings`:
 
 ```text
-finding ID | rule ID | path:line
+finding:da09abeeb313a9da9854dd2f | data.hidden-catch-fallback | input.ts:31:5 — Whether `{}` is an intentional optional-config fallback or masks required configuration errors.
 ```
 
-Enforce exactly one verdict per finding ID. This matters when graph and AST providers report different claims at the same location.
+Changes:
+
+- `skills/ai-slop-review/SKILL.md` Output section: verdict format `finding ID | rule ID | path:line`, one verdict line per finding ID (verbatim ID, never a prefix), no merging of same-location findings, no verdicts for unreviewed candidates, and a pre-coverage recount rule (verdict lines must equal adjudicated IDs).
+- `index.ts` `findingDetails()`: the ID tuple now leads each finding detail (`id | ruleId | path:line | confidence`), mirroring the queue format so the model copies exact IDs.
+
+Verified with the real skill smoke: 8 verdict lines, 8 unique IDs, 8/8 adjudicated, exit code 0; full `npm run validate` 166/166, actionable precision 1.0. Skill prose is intentionally not unit-tested.
 
 ### 3. Exercise repository scope through the skill
 
-Run `/skill:ai-slop-review audit repository` on a small fixture and then a real repository. Confirm:
+Confirmed with `/skill:ai-slop-review audit repository` on a small fixture repo (4 files, 6 candidates, 3 families) and on this repository itself (86 files, 17 candidates, 3 families):
 
-- `slop_review` uses repository mode.
-- `slop_findings` returns one highest-ranked representative per rule family by default.
-- Reported LLM coverage is representative coverage, not falsely `N/N` over all static candidates.
+- `slop_review` uses repository mode with bounded discovery; scan line matches ground truth (`Static scan: complete — N files, Y candidates, 0 skipped`).
+- `slop_findings` returns one highest-ranked representative per rule family (tool behavior covered by `test/interfaces.test.ts`).
+- Coverage is reported as representative coverage.
+
+The first real-repo run exposed a skill gap: the model ignored the representatives default and adjudicated 17/17 candidates (200 s run). `SKILL.md` was tightened:
+
+- Workflow step 3 now makes `representatives: true` mandatory for repository scope without `full` — "never page through the full ranked queue".
+- Output format rules now require the adjudication line `N/M rule-family representatives (of Y static candidates)` for repository scope, never presenting representative coverage as full coverage.
+
+After the tightening, both fixture and real repo produce exactly one verdict per family (3 verdicts, `3/3 rule-family representatives (of 17 static candidates) reviewed`) and the real-repo run dropped from 200 s to 62 s.
 
 ### 4. Evaluate AI verdict quality
 
-Add a small manual acceptance corpus with paired cases:
+Accepted. Paired corpus committed at `artifacts/verdict-corpus/` (5 pairs, both members per file); the run record is `artifacts/verdict-acceptance.md`.
 
-- private redundant wrapper vs exported compatibility wrapper;
-- hidden fallback vs typed/intentional fallback;
-- swallowed error vs documented best-effort boundary;
-- true duplicate implementation vs same-body separate contracts;
-- missing dependency vs optional/platform/inline-declared dependency.
+Single explicit-scope skill run over all five pairs: 5 files, 20 candidates, 20/20 adjudicated, one verdict per ID, exit code 0. Target-family verdicts 8/8 correct:
 
-Do not unit-test skill prose. Run the skill and record observed verdicts. Change deterministic detectors only when failures are systematic; otherwise refine the falsification instructions.
+- private pass-through wrapper → confirmed; exported deprecated compatibility wrapper → dismissed;
+- silent `[]` fallback → confirmed; documented typed fallback → correctly not a candidate;
+- empty catch → confirmed; documented best-effort telemetry → correctly not a candidate;
+- identical-body/identical-contract exports → confirmed; same-body separate documented contracts → dismissed;
+- undeclared `import requests` → confirmed; optional `orjson` import → correctly not a candidate.
+
+All 12 `assurance.no-linked-tests` noise candidates were judged `needs-context` (honest absent a local testing policy). No systematic detector failures, so no detector or falsification changes were made.
+
+One detector behavior surfaced: the graph clone detector (`src/graph/provider.ts`) skips single-statement bodies (no `bodyHash`), so duplicate pairs need multi-statement bodies to be flagged — the corpus files reflect that shape.
+
+## Remaining work
 
 ### 5. Release preparation
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -278,4 +279,22 @@ test("scan abort signal prevents native providers from scanning", async () => {
   assert.equal(result.scannedFiles.length, 0);
   assert.equal(result.completeness?.status, "abstained");
   assert.ok(result.skipped.some((item) => /aborted/.test(item.reason)));
+});
+
+test("an idle isolated worker does not keep the parent process alive", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-worker-exit-"));
+  try {
+    writeFileSync(path.join(root, "input.ts"), "export const value = 1;\n");
+    const entry = pathToFileURL(path.resolve(import.meta.dirname, "../src/isolated-scan.ts")).href;
+    // No resetIsolatedScanWorker: the reusable fork child must not block exit.
+    // Dynamic imports here run inside a separate `node -e` process whose module
+    // graph must stay independent of this test process — static imports cannot.
+    const script = `const { scanFilesIsolated } = await import(${JSON.stringify(entry)}); const { DEFAULT_CONFIG } = await import(${JSON.stringify(pathToFileURL(path.resolve(import.meta.dirname, "../src/core/config.ts")).href)}); const config = structuredClone(DEFAULT_CONFIG); config.graph.enabled = false; await scanFilesIsolated(${JSON.stringify(root)}, ['input.ts'], undefined, 'explicit', { config });`;
+    execFileSync(process.execPath, ["--experimental-strip-types", "--experimental-transform-types", "--input-type=module", "-e", script], {
+      timeout: 30_000,
+      stdio: "ignore",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

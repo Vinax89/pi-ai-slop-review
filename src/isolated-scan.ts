@@ -96,8 +96,19 @@ class ScanTransport {
     });
   }
 
-  ref(): void { this.worker?.ref(); this.child?.ref(); }
-  unref(): void { this.worker?.unref(); this.child?.unref(); }
+  ref(): void {
+    this.worker?.ref();
+    this.child?.ref();
+    // fork's IPC pipe is a separate ref'd handle: unref() alone leaves it
+    // attached, so an idle worker keeps the parent process alive after the
+    // model response. Unref it too; the pipe dies with the parent.
+    this.child?.channel?.ref();
+  }
+  unref(): void {
+    this.worker?.unref();
+    this.child?.unref();
+    this.child?.channel?.unref();
+  }
   onMessage(listener: (value: unknown) => void): void { this.worker?.on("message", listener); this.child?.on("message", listener); }
   offMessage(listener: (value: unknown) => void): void { this.worker?.off("message", listener); this.child?.off("message", listener); }
   onceError(listener: (error: Error & { code?: string }) => void): void { this.worker?.once("error", listener); this.child?.once("error", listener); }

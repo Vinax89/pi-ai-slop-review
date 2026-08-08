@@ -291,9 +291,8 @@ export default async function (pi: any): Promise<void> {
       .filter((item) => finding.evidenceIds.includes(item.id) || item.source?.filePath === finding.filePath && item.source.end >= finding.start && item.source.start <= finding.end)
       .map((item) => item.providerId) ?? [];
     return [
-      `${finding.confidence} ${finding.ruleId} ${finding.filePath}:${finding.line}:${finding.column}`,
+      `${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line}:${finding.column} | ${finding.confidence}`,
       finding.message,
-      `ID: ${finding.id}`,
       `Weighted severity: ${severity.severity} (${severity.score}/100)`,
       `Classification: ${finding.classification}; risk: ${finding.risk}; maximum action: ${finding.maximumAction}`,
       `Providers: ${[...new Set(providers)].join(", ") || "detector only"}`,
