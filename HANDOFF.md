@@ -177,17 +177,15 @@ All 12 `assurance.no-linked-tests` noise candidates were judged `needs-context` 
 
 One detector behavior surfaced: the graph clone detector (`src/graph/provider.ts`) skips single-statement bodies (no `bodyHash`), so duplicate pairs need multi-statement bodies to be flagged — the corpus files reflect that shape.
 
-## Remaining work
+## Release status (2026-08-08)
 
-### 5. Release preparation
+Workflow accepted; v1.3.0 prepared and committed (commit `7f21bca`, tag `v1.3.0` pushed to origin):
 
-If the workflow is accepted:
+- version bumped 1.2.5 → 1.3.0 (`package.json`, `npm-shrinkwrap.json`, README git-install tag);
+- `npm run validate` 166/166, actionable precision 1.0;
+- `npm pack --dry-run --json` confirmed `skills/ai-slop-review/SKILL.md` ships and `artifacts/verdict-corpus/` fixtures are excluded (`!artifacts/verdict-corpus` in the `files` whitelist).
 
-- bump the package minor version;
-- update the Git installation example/tag in `README.md`;
-- run `npm run validate` again;
-- inspect `npm pack --dry-run --json` for `skills/ai-slop-review/SKILL.md`;
-- publish only after the non-interactive shutdown behavior is understood.
+`npm publish` is blocked on registry credentials: the token in `~/.npmrc` is not accepted for the `vinbitz` maintainer account (`npm whoami` → 401, publish PUT → 404). Unblock: `npm login` as the maintainer or install a valid automation token, then run `npm publish` from a clean checkout at `v1.3.0`.
 
 ## Constraints to preserve
 
