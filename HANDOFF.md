@@ -202,6 +202,8 @@ Eight improvement items from the post-release review, all implemented and verifi
 
 Tests: `test/verdicts.test.ts` (6 new: parser, verifier, ledger record/classify, replacement, outcome mapping, report-only queue). `npm run validate` 172/172, actionable precision 1.0.
 
+Published as v1.4.0 (commit `43e4679`, tag `v1.4.0`): `latest` on npm (322.6 kB tarball, 140 files, `dist/src/verdicts.js` + `skills/ai-slop-review/SKILL.md` included, fixtures excluded). Local `pi` install updated to 1.4.0; installed-package smoke in the default environment passed (delta audit + verdict carry-forward from the source-tree run, exit 0).
+
 ## Constraints to preserve
 
 - No inferred AI authorship.
