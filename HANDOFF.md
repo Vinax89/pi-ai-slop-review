@@ -221,6 +221,8 @@ Ten items from the v1.5 review, all implemented and verified:
 
 Tests: 6 new (`report-only config merge`, `delta discovery x2`, `verdict stats`, `skip-unchanged re-record`, `verdict manifest`). `npm run validate` 178/178, actionable precision 1.0. Smokes: delta audit with a deleted file scanned only the changed source; empty delta returned "no supported source changes since git HEAD" without scanning; corpus run 8/20 with honest report-only coverage.
 
+Published as v1.5.0 (commit `03b3071`, tag `v1.5.0`): `latest` on npm (325.9 kB tarball, 140 files). Local `pi` install updated to 1.5.0 via `pi install npm:pi-ai-slop-review@1.5.0` — note `pi update --extension` lags the registry metadata cache and did not pick up the new version; explicit-version install is the reliable upgrade path. Installed-package smoke in the default environment passed (exit 0; the evidence-sufficiency bias from v1.4 flipped a previously `needs-context` wrapper to `confirmed` with concrete evidence).
+
 ## Constraints to preserve
 
 - No inferred AI authorship.
