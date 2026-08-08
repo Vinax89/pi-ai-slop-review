@@ -185,7 +185,7 @@ Workflow accepted; v1.3.0 prepared and committed (commit `7f21bca`, tag `v1.3.0`
 - `npm run validate` 166/166, actionable precision 1.0;
 - `npm pack --dry-run --json` confirmed `skills/ai-slop-review/SKILL.md` ships and `artifacts/verdict-corpus/` fixtures are excluded (`!artifacts/verdict-corpus` in the `files` whitelist).
 
-`npm publish` is blocked on registry credentials: the token in `~/.npmrc` is not accepted for the `vinbitz` maintainer account (`npm whoami` → 401, publish PUT → 404). Unblock: `npm login` as the maintainer or install a valid automation token, then run `npm publish` from a clean checkout at `v1.3.0`.
+Published: `pi-ai-slop-review@1.3.0` is `latest` on the npm registry (maintainer `vinbitz`, 311.8 kB tarball, 138 files — `skills/ai-slop-review/SKILL.md` and `dist/src/isolated-scan.js` included, `artifacts/verdict-corpus/` excluded). Tarball: `https://registry.npmjs.org/pi-ai-slop-review/-/pi-ai-slop-review-1.3.0.tgz`. Publish required an interactive browser login plus 2FA OTP; the earlier `~/.npmrc` token was rejected (401/404).
 
 ## Constraints to preserve
 
