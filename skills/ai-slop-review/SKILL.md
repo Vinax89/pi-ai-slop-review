@@ -15,9 +15,9 @@ Interpret the invocation arguments:
 
 - File paths: call `slop_review` with `paths`.
 - `audit repository`: call `slop_review` with `scope: "repository"`.
-- `audit repository delta`: call `slop_review` with `scope: "repository"` and `delta: true` to scan only files changed since git HEAD (falls back to a full audit when git is unavailable).
+- `audit repository delta`: call `slop_review` with `scope: "repository"` and `delta: true` to scan only files changed since git HEAD. When git is unavailable the review explicitly falls back to a full audit; when nothing changed since HEAD it says so and stops.
 - Otherwise: call `slop_review` with `scope: "session"`.
-- `full`: adjudicate every candidate in pages of 20. Without `full`, adjudicate up to 20 candidates for session or explicit scope, or one representative per rule family for repository scope.
+- `full`: adjudicate every candidate in pages of 20, passing `includeReportOnly: true` so report-only families are included. Without `full`, adjudicate up to 20 candidates for session or explicit scope, or one representative per rule family for repository scope.
 
 Explicit paths take precedence over the requested scope. If no session files are tracked, stop and ask for paths or `audit repository`; never silently widen the scan.
 
@@ -25,7 +25,7 @@ Explicit paths take precedence over the requested scope. If no session files are
 
 1. Run `slop_review`. Record scan status, files scanned, skipped items, and candidate count.
 2. Stop on `abstained`. On `partial`, continue only with available evidence and label every conclusion partial.
-3. Get the review queue with `slop_findings`. For repository scope without `full`, you MUST call `slop_findings` with `representatives: true` and adjudicate only the returned representatives — never page through the full ranked queue. For session or explicit scope without `full`, page through ranked findings up to 20. Report-only families (`assurance.no-linked-tests`) are omitted from the queue by default; do not request `includeReportOnly` unless the user asks for coverage-signal detail.
+3. Get the review queue with `slop_findings`. For repository scope without `full`, you MUST call `slop_findings` with `representatives: true` and adjudicate only the returned representatives — never page through the full ranked queue. For session or explicit scope without `full`, page through ranked findings up to 20. Fetch several findings together with `findingIds` (up to 20 per call) instead of one at a time. Report-only families are omitted from the queue by default and named in the queue text; do not request `includeReportOnly` unless the user asks for coverage-signal detail.
 4. Check the verdict ledger with `slop_verdicts`:
    - `new` — adjudicate normally.
    - `same` — the prior verdict applies because the source hash is unchanged; verify the evidence briefly and carry the verdict forward, noting it as unchanged from the prior review.
@@ -97,6 +97,7 @@ Format rules:
 - Do not emit a verdict for a finding ID you did not review; omitted candidates are counted in Coverage, not verdicts.
 - Before reporting Coverage, count your verdict lines: they must equal the number of finding IDs you adjudicated, and `slop_verify_verdicts` must pass.
 - Repository scope without `full`: report the adjudication line as `N/M rule-family representatives (of Y static candidates)`, where M is the number of representatives you received and Y the static candidate total from the scan line. Never present representative coverage as coverage of all candidates.
+- When report-only families were omitted, say so explicitly in the adjudication line (for example `8/20 candidates reviewed; 12 report-only test-assurance candidates omitted by default`). Do not count omitted candidates as reviewed.
 - When you carried a verdict forward from the ledger, note it: `(unchanged from prior review)`.
 
 Omit empty verdict sections. Keep raw detector counts out of the conclusion except in Coverage.

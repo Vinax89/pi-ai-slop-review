@@ -1,3 +1,6 @@
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import { StateStore } from "./core/store.ts";
 import { SCHEMA_VERSION, type FeedbackRecord, type Finding, type ScanResult, type Verdict, type VerdictRecord } from "./types.ts";
 
@@ -50,12 +53,18 @@ export function recordVerdicts(rootDir: string, scan: ScanResult, entries: Verdi
       repositoryId: store.repositoryId,
     });
   }
+  let written = 0;
   store.update((state) => {
     const byFindingId = new Map(state.verdicts.map((record) => [record.findingId, record]));
-    for (const record of records) byFindingId.set(record.findingId, record);
+    for (const record of records) {
+      const existing = byFindingId.get(record.findingId);
+      if (existing && existing.sourceHash === record.sourceHash && existing.verdict === record.verdict && existing.evidence === record.evidence) continue;
+      byFindingId.set(record.findingId, record);
+      written += 1;
+    }
     state.verdicts = [...byFindingId.values()];
   });
-  return records.length;
+  return written;
 }
 
 export function verdictLedger(rootDir: string, stateRoot?: string): VerdictRecord[] {
@@ -82,4 +91,84 @@ export function verdictToFeedbackOutcome(verdict: Verdict): FeedbackRecord["outc
   if (verdict === "confirmed") return "accepted";
   if (verdict === "dismissed") return "intentional";
   return "insufficient-evidence";
+}
+
+export interface VerdictStats {
+  ruleId: string;
+  total: number;
+  confirmed: number;
+  dismissed: number;
+  needsContext: number;
+}
+
+export function verdictStats(ledger: VerdictRecord[]): VerdictStats[] {
+  const groups = new Map<string, VerdictStats>();
+  for (const record of ledger) {
+    const entry = groups.get(record.ruleId) ?? { ruleId: record.ruleId, total: 0, confirmed: 0, dismissed: 0, needsContext: 0 };
+    entry.total += 1;
+    if (record.verdict === "confirmed") entry.confirmed += 1;
+    else if (record.verdict === "dismissed") entry.dismissed += 1;
+    else entry.needsContext += 1;
+    groups.set(record.ruleId, entry);
+  }
+  return [...groups.values()].sort((left, right) => right.total - left.total);
+}
+
+export interface VerdictManifestEntry {
+  findingId: string;
+  ruleId: string;
+  filePath: string;
+  line: number;
+  verdict: Verdict;
+  evidence: string;
+  status: "new" | "same" | "stale" | "resolved";
+  reviewedAt: string;
+}
+
+export interface VerdictManifest {
+  schemaVersion: typeof SCHEMA_VERSION;
+  generatedAt: string;
+  scanId: string;
+  scannedFiles: string[];
+  candidates: number;
+  adjudicated: VerdictManifestEntry[];
+  resolved: number;
+}
+
+export function verdictManifest(scan: ScanResult, delta: VerdictDelta): VerdictManifest {
+  const adjudicated = delta.findings.map(({ finding, classification }) => {
+    const record = classification.status === "new" ? undefined : classification.record;
+    return {
+      findingId: finding.id,
+      ruleId: finding.ruleId,
+      filePath: finding.filePath,
+      line: finding.line,
+      verdict: record?.verdict ?? "needs-context",
+      evidence: record?.evidence ?? "not yet adjudicated",
+      status: classification.status,
+      reviewedAt: record?.createdAt ?? "",
+    } satisfies VerdictManifestEntry;
+  });
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    generatedAt: new Date().toISOString(),
+    scanId: scan.scanId,
+    scannedFiles: [...scan.scannedFiles],
+    candidates: scan.findings.length,
+    adjudicated,
+    resolved: delta.resolved.length,
+  };
+}
+
+export function writeVerdictManifest(rootDir: string, scan: ScanResult, delta: VerdictDelta, exportPath: string): string {
+  const absolute = path.resolve(rootDir, exportPath);
+  mkdirSync(path.dirname(absolute), { recursive: true });
+  const temporaryPath = `${absolute}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(verdictManifest(scan, delta), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    renameSync(temporaryPath, absolute);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
+  return absolute;
 }

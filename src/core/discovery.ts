@@ -1,4 +1,5 @@
-import { readdirSync, realpathSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 export const EXCLUDED_DIRECTORIES = new Set([".git", ".hg", ".svn", ".venv", ".next", "venv", "node_modules", "dist", "build", "coverage", "vendor"]);
@@ -42,4 +43,39 @@ export function discoverRepositoryFiles(rootDir: string, maxFiles: number): { pa
     if (truncated) break;
   }
   return { paths: paths.sort(), truncated };
+}
+
+/**
+ * Project-relative source paths changed since git HEAD: tracked modifications
+ * and renames (deleted files excluded) plus untracked files. Returns undefined
+ * when git is unavailable or has no readable HEAD, and an empty array when git
+ * works but nothing changed.
+ */
+export function changedSinceHead(rootDir: string): string[] | undefined {
+  try {
+    const run = (args: string[]): string[] => {
+      const output = execFileSync("git", args, { cwd: rootDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      return output.split("\0").filter(Boolean);
+    };
+    const changed = new Set<string>();
+    const statusRecords = run(["diff", "--name-status", "-z", "HEAD"]);
+    for (let index = 0; index < statusRecords.length; index += 1) {
+      const record = statusRecords[index];
+      const tab = record.indexOf("\t");
+      const status = tab === -1 ? record : record.slice(0, tab);
+      const filePath = tab === -1 ? "" : record.slice(tab + 1);
+      if (status.startsWith("R") || status.startsWith("C")) index += 1; // -z emits the rename source path as a separate record
+      if (filePath && !status.startsWith("D")) changed.add(filePath);
+    }
+    for (const filePath of run(["ls-files", "-m", "-o", "--exclude-standard", "-z"])) changed.add(filePath);
+    const root = realpathSync(rootDir);
+    return [...changed]
+      .filter((filePath) =>
+        (SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()) || MANIFESTS.has(path.basename(filePath))) &&
+        existsSync(path.resolve(root, filePath)),
+      )
+      .sort();
+  } catch {
+    return undefined;
+  }
 }

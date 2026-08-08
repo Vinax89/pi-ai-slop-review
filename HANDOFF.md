@@ -204,6 +204,23 @@ Tests: `test/verdicts.test.ts` (6 new: parser, verifier, ledger record/classify,
 
 Published as v1.4.0 (commit `43e4679`, tag `v1.4.0`): `latest` on npm (322.6 kB tarball, 140 files, `dist/src/verdicts.js` + `skills/ai-slop-review/SKILL.md` included, fixtures excluded). Local `pi` install updated to 1.4.0; installed-package smoke in the default environment passed (delta audit + verdict carry-forward from the source-tree run, exit 0).
 
+## Feature batch (unreleased, candidate v1.5.0)
+
+Ten items from the v1.5 review, all implemented and verified:
+
+1. **Validate flake hardening** — the one-off 171/172 failure never reproduced in 6 subsequent `validate` runs; code review found no shared-state race (all tests use isolated tmp state roots). The plausible mechanism was concurrent `dist` rebuilds: packaging tests ran `npm pack` (triggering `prepare` → `tsc`) while other test files ran. All three pack calls now use `--ignore-scripts` (dist is already built by `validate`'s build step), removing the contention source.
+2. **Delta excludes deleted files** — `changedSinceHead` now parses `git diff --name-status -z` and drops `D` entries (renames handled, untracked included, non-source excluded, missing files filtered); moved to `src/core/discovery.ts` for testability.
+3. **Delta honesty** — no readable git HEAD → explicit warning + labeled full-audit fallback; no supported changes since HEAD → returns "nothing to audit" without scanning. No more silent widening.
+4. **Configurable report-only rules** — `rules.reportOnly` added to `AiSlopConfig` (default `["assurance.no-linked-tests"]`), merged/validated like other sections, documented in `schema/config.schema.json`.
+5. **Batch finding retrieval** — `slop_findings` accepts `findingIds` (max 20) and returns all details in one call; skill guidance updated to fetch in batches.
+6. **Skip unchanged verdict rewrites** — `recordVerdicts` skips records whose verdict/evidence/sourceHash are identical and keeps the original timestamp; returns the number actually written.
+7. **Single `store.load()`** in `initialize()` (was two disk reads).
+8. **Verdict manifest export** — `slop_verdicts` accepts `exportPath`; `writeVerdictManifest` writes an atomic JSON manifest (scanId, candidates, per-finding verdict/evidence/status, resolved count) for CI/PR consumption.
+9. **Verdict stats** — `slop_verdicts` accepts `stats: true`; `verdictStats` aggregates per rule family (confirmed/dismissed/needs-context across reviews) — the calibration signal for tuning report-only defaults.
+10. **Skill polish** — `full` passes `includeReportOnly: true`; coverage rules require naming omitted report-only candidates; batch guidance; acceptance doc counts updated.
+
+Tests: 6 new (`report-only config merge`, `delta discovery x2`, `verdict stats`, `skip-unchanged re-record`, `verdict manifest`). `npm run validate` 178/178, actionable precision 1.0. Smokes: delta audit with a deleted file scanned only the changed source; empty delta returned "no supported source changes since git HEAD" without scanning; corpus run 8/20 with honest report-only coverage.
+
 ## Constraints to preserve
 
 - No inferred AI authorship.

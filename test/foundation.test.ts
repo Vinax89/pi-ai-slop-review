@@ -403,6 +403,21 @@ test("configuration clamps resource limits to safe ceilings", () => {
   assert.equal(loaded.warnings.filter((warning) => warning.includes("clamped limits.")).length, 5);
 });
 
+test("report-only rules default to no-linked-tests and merge from configuration", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-slop-config-rules-"));
+  const globalPath = path.join(root, "global.json");
+  const defaults = loadConfig(root, { globalPath });
+  assert.deepEqual(defaults.config.rules.reportOnly, ["assurance.no-linked-tests"]);
+
+  writeFileSync(globalPath, JSON.stringify({ rules: { reportOnly: ["assurance.no-linked-tests", "errors.suppressed"] } }));
+  const extended = loadConfig(root, { globalPath });
+  assert.deepEqual(extended.config.rules.reportOnly, ["assurance.no-linked-tests", "errors.suppressed"]);
+
+  writeFileSync(globalPath, JSON.stringify({ rules: { reportOnly: "not-an-array" } }));
+  const rejected = loadConfig(root, { globalPath });
+  assert.deepEqual(rejected.config.rules.reportOnly, ["assurance.no-linked-tests"]);
+});
+
 test("corpus loader and evaluator count unsafe hard-negative actions", async () => {
   const cases = loadCorpus(new URL("../library/cases.jsonl", import.meta.url).pathname);
   assert.ok(cases.length >= 13);

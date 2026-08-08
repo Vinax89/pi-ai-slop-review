@@ -43,7 +43,7 @@ pi --no-extensions --no-skills -e /home/irvin/ai-slop/index.ts \
   -p "/skill:ai-slop-review artifacts/verdict-corpus/pair1-wrapper.ts artifacts/verdict-corpus/pair2-fallback.ts artifacts/verdict-corpus/pair3-swallow.ts artifacts/verdict-corpus/pair4-duplicate.ts artifacts/verdict-corpus/pair5-dependency.py"
 ```
 
-Expected counts: 5 files, 20 candidates, 3 rule families sampled for adjudication in repository mode, or all 20 in explicit mode (shown above).
+Expected counts: 5 files, 20 candidates, 8 adjudicated in explicit mode (12 `assurance.no-linked-tests` report-only candidates omitted by default), or 3 rule-family representatives sampled in repository mode.
 
 ## Consistency and ledger re-run — 2026-08-08
 

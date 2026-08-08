@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Text as PiText } from "@earendil-works/pi-tui";
@@ -9,7 +8,7 @@ import { assessScanCompleteness } from "./src/core/completeness.ts";
 import { loadConfig, redactConfig, type LoadedConfig } from "./src/core/config.ts";
 import { assessIntent, formatIntentAssessment, type IntentReviewProfile } from "./src/core/intent.ts";
 import { analyzeForensics, type ForensicInputKind, type ForensicMetrics } from "./src/core/forensics.ts";
-import { discoverRepositoryFiles, MANIFESTS, SOURCE_EXTENSIONS } from "./src/core/discovery.ts";
+import { changedSinceHead, discoverRepositoryFiles } from "./src/core/discovery.ts";
 import { clusterBehaviorEvents, inspectBehaviorEvents, reportDomainPatterns, type BehaviorEvent } from "./src/core/behavior.ts";
 import { checkArtifactConsistency, verifyProvenance } from "./src/core/provenance.ts";
 import { splitCommand as splitCommandPaths } from "./src/core/execution.ts";
@@ -28,31 +27,10 @@ import { applyProposal, createProposal, listLaboratory, rollbackProposal, valida
 import { addSuppression, recordFeedback, removeSuppression } from "./src/policy/engine.ts";
 import { createFindingQueue, formatClaims, formatDelta, formatReport, formatTimeline, formatTriage, parseVerdictLines, verifyVerdicts } from "./src/report.ts";
 import { scanFilesIsolated } from "./src/isolated-scan.ts";
-import { classifyVerdicts, recordVerdicts, verdictLedger, verdictToFeedbackOutcome, type VerdictEntry } from "./src/verdicts.ts";
+import { classifyVerdicts, recordVerdicts, verdictLedger, verdictToFeedbackOutcome, verdictStats, writeVerdictManifest, type VerdictEntry } from "./src/verdicts.ts";
 import type { ClaimAssessment, ExperimentSpec, FeedbackRecord, Finding, LedgerEvent, ScanResult, ScanScope } from "./src/types.ts";
 
 const DISABLED = existsSync(fileURLToPath(new URL(".disabled", import.meta.url)));
-
-const REPORT_ONLY_RULES = ["assurance.no-linked-tests"] as const;
-
-/**
- * Project-relative source paths changed since git HEAD (tracked modifications
- * plus untracked files), or undefined when git is unavailable or has no HEAD.
- */
-function changedSinceHead(rootDir: string): string[] | undefined {
-  try {
-    const run = (args: string[]): string[] => {
-      const output = execFileSync("git", args, { cwd: rootDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-      return output.split("\0").filter(Boolean);
-    };
-    const changed = new Set([...run(["diff", "--name-only", "-z", "HEAD"]), ...run(["ls-files", "-m", "-o", "--exclude-standard", "-z"])]);
-    return [...changed]
-      .filter((filePath) => SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()) || MANIFESTS.has(path.basename(filePath)))
-      .sort();
-  } catch {
-    return undefined;
-  }
-}
 
 function formatVerdictDelta(delta: ReturnType<typeof classifyVerdicts>, prefix?: string): string {
   const selected = prefix
@@ -299,12 +277,13 @@ export default async function (pi: any): Promise<void> {
     store = new StateStore(ctx.cwd);
     if (!lastOutcome) {
       try {
-        const persisted = store.load().baselines[REVIEW_BASELINE_NAME] ?? store.load().baselines[AUDIT_BASELINE_NAME];
-        if (persisted) {
+        const persisted = store.load();
+        const baseline = persisted.baselines[REVIEW_BASELINE_NAME] ?? persisted.baselines[AUDIT_BASELINE_NAME];
+        if (baseline) {
           lastOutcome = {
-            result: persisted,
-            delta: diffScans(persisted),
-            verification: ledger.verificationStatus(persisted.scope.paths),
+            result: baseline,
+            delta: diffScans(baseline),
+            verification: ledger.verificationStatus(baseline.scope.paths),
             claims: [],
             warnings: ["latest review restored from persistent state"],
           };
@@ -923,10 +902,18 @@ export default async function (pi: any): Promise<void> {
       const mode: ScanScope["mode"] = paths ? "explicit" : params.scope ?? "session";
       let discoveryTruncated = false;
       let deltaScope = false;
+      let deltaUnavailable = false;
       if (mode === "repository") {
         if (params.delta) {
           const changed = changedSinceHead(ctx.cwd);
-          if (changed?.length) {
+          if (changed === undefined) {
+            deltaUnavailable = true;
+          } else if (changed.length === 0) {
+            return {
+              content: [{ type: "text", text: "No supported source changes since git HEAD — nothing to audit. Run a full `audit repository` or pass explicit paths." }],
+              details: undefined,
+            };
+          } else {
             paths = changed;
             deltaScope = true;
           }
@@ -946,10 +933,13 @@ export default async function (pi: any): Promise<void> {
           details: undefined,
         };
       }
-      onUpdate?.({ content: [{ type: "text", text: deltaScope
-        ? `Auditing ${pathCount} changed file(s) since HEAD (delta)...`
-        : `${mode === "repository" ? "Auditing" : "Reviewing"} ${pathCount} file(s)...` }] });
+      onUpdate?.({ content: [{ type: "text", text: deltaUnavailable
+        ? "Delta audit unavailable (git HEAD not readable); auditing the full repository..."
+        : deltaScope
+          ? `Auditing ${pathCount} changed file(s) since HEAD (delta)...`
+          : `${mode === "repository" ? "Auditing" : "Reviewing"} ${pathCount} file(s)...` }] });
       const outcome = await review(ctx.cwd, paths, signal, params.claims, mode, discoveryTruncated);
+      if (deltaUnavailable) outcome.warnings.push("delta audit unavailable (git HEAD not readable); ran a full repository audit");
       if (deltaScope) outcome.warnings.push("repository delta audit scoped to files changed since git HEAD");
       if (discoveryTruncated) outcome.warnings.push(`repository discovery stopped at ${loadedConfig!.config.limits.maxFiles} files; result completeness is partial`);
       lastOutcome = outcome;
@@ -983,6 +973,7 @@ export default async function (pi: any): Promise<void> {
     ],
     parameters: Type.Object({
       findingId: Type.Optional(Type.String({ description: "Exact finding ID or unique prefix from the latest review" })),
+      findingIds: Type.Optional(Type.Array(Type.String({ description: "Exact finding IDs or unique prefixes to fetch together (max 20)" }))),
       offset: Type.Optional(Type.Number({ description: "Zero-based ranked queue offset" })),
       limit: Type.Optional(Type.Number({ description: "Page size from 1 to 20" })),
       representatives: Type.Optional(Type.Boolean({ description: "Return only the highest-ranked finding from each rule family" })),
@@ -990,7 +981,7 @@ export default async function (pi: any): Promise<void> {
     }),
     async execute(
       _toolCallId: string,
-      params: { findingId?: string; offset?: number; limit?: number; representatives?: boolean; includeReportOnly?: boolean },
+      params: { findingId?: string; findingIds?: string[]; offset?: number; limit?: number; representatives?: boolean; includeReportOnly?: boolean },
       signal: AbortSignal | undefined,
     ) {
       if (signal?.aborted) throw new Error("AI-slop finding retrieval cancelled");
@@ -999,9 +990,18 @@ export default async function (pi: any): Promise<void> {
         const finding = findingByPrefix(params.findingId);
         return { content: [{ type: "text", text: findingDetails(finding) }], details: finding };
       }
+      if (params.findingIds?.length) {
+        const ids = [...new Set(params.findingIds)];
+        if (ids.length > 20) throw new Error("request at most 20 finding IDs at once");
+        const findings = ids.map((id) => findingByPrefix(id));
+        return {
+          content: [{ type: "text", text: findings.map((finding) => findingDetails(finding)).join("\n\n") }],
+          details: { findings },
+        };
+      }
       const page = createFindingQueue(lastOutcome.result, {
         ...params,
-        reportOnly: params.includeReportOnly ? [] : REPORT_ONLY_RULES,
+        reportOnly: params.includeReportOnly ? [] : loadedConfig!.config.rules.reportOnly,
       });
       return {
         content: [{ type: "text", text: page.text }],
@@ -1030,14 +1030,27 @@ export default async function (pi: any): Promise<void> {
     ],
     parameters: Type.Object({
       findingId: Type.Optional(Type.String({ description: "Exact finding ID or unique prefix to inspect" })),
+      stats: Type.Optional(Type.Boolean({ description: "Append per-rule-family verdict statistics from the whole ledger" })),
+      exportPath: Type.Optional(Type.String({ description: "Project-relative path for an atomic JSON verdict manifest export" })),
     }),
-    async execute(_toolCallId: string, params: { findingId?: string }, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {
+    async execute(_toolCallId: string, params: { findingId?: string; stats?: boolean; exportPath?: string }, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {
       ensureInitialized(ctx);
       if (signal?.aborted) throw new Error("AI-slop verdict retrieval cancelled");
       if (!lastOutcome) throw new Error("Run slop_review before requesting verdicts");
-      const delta = classifyVerdicts(lastOutcome.result.findings, verdictLedger(ctx.cwd));
+      const ledger = verdictLedger(ctx.cwd);
+      const delta = classifyVerdicts(lastOutcome.result.findings, ledger);
       const text = formatVerdictDelta(delta, params.findingId);
-      return { content: [{ type: "text", text }], details: delta };
+      const sections = [text];
+      if (params.stats) {
+        const stats = verdictStats(ledger);
+        sections.push("", "VERDICT STATS BY RULE FAMILY",
+          ...(stats.length ? stats.map((item) => `- ${item.ruleId}: ${item.total} review(s) — ${item.confirmed} confirmed, ${item.dismissed} dismissed, ${item.needsContext} needs-context`) : ["- no stored verdicts yet"]));
+      }
+      if (params.exportPath) {
+        const exported = writeVerdictManifest(ctx.cwd, lastOutcome.result, delta, params.exportPath);
+        sections.push("", `Verdict manifest written to ${exported}`);
+      }
+      return { content: [{ type: "text", text: sections.join("\n") }], details: delta };
     },
     renderCall(args: { findingId?: string }, theme: { fg(color: string, text: string): string; bold(text: string): string }) {
       return new Text(theme.fg("toolTitle", theme.bold("slop_verdicts ")) + theme.fg("muted", args.findingId ?? "all findings"), 0, 0);

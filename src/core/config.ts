@@ -39,6 +39,7 @@ export interface AiSlopConfig {
     layers: Array<{ name: string; patterns: string[] }>;
     allowedEdges: string[];
   };
+  rules: { reportOnly: string[] };
   experiments: Record<string, boolean>;
   verification: { commands: VerificationCommandConfig[] };
   limits: {
@@ -80,6 +81,7 @@ export const DEFAULT_CONFIG: AiSlopConfig = {
     layers: [],
     allowedEdges: [],
   },
+  rules: { reportOnly: ["assurance.no-linked-tests"] },
   experiments: {},
   verification: { commands: [] },
   limits: {
@@ -157,6 +159,7 @@ function mergeConfig(base: AiSlopConfig, value: unknown, warnings: string[], sou
   const limits = object(input.limits);
   const providers = object(input.providers);
   const graph = object(input.graph);
+  const rules = object(input.rules);
   const lab = object(input.lab);
   const verification = object(input.verification);
   for (const [name, value] of Object.entries({
@@ -165,6 +168,7 @@ function mergeConfig(base: AiSlopConfig, value: unknown, warnings: string[], sou
     limits: input.limits,
     providers: input.providers,
     graph: input.graph,
+    rules: input.rules,
     lab: input.lab,
     verification: input.verification,
   })) {
@@ -305,6 +309,9 @@ function mergeConfig(base: AiSlopConfig, value: unknown, warnings: string[], sou
       specPatterns: stringArray(graph?.specPatterns, base.graph.specPatterns),
       layers: parseLayers(graph?.layers, warnings, source, base.graph.layers),
       allowedEdges: stringArray(graph?.allowedEdges, base.graph.allowedEdges),
+    },
+    rules: {
+      reportOnly: stringArray(rules?.reportOnly, base.rules.reportOnly),
     },
     experiments: configuredExperiments,
     verification: { commands },

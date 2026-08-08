@@ -10,7 +10,7 @@ interface PackedFile {
 }
 
 function packedFiles(): string[] {
-  const output = execFileSync("npm", ["pack", "--dry-run", "--json"], { encoding: "utf8" });
+  const output = execFileSync("npm", ["pack", "--ignore-scripts", "--dry-run", "--json"], { encoding: "utf8" });
   const rows = JSON.parse(output) as Array<{ files: PackedFile[] }>;
   return rows[0]?.files.map((item) => item.path) ?? [];
 }
@@ -43,7 +43,7 @@ test("npm pack contains runtime, schema, documentation, and metadata artifacts",
 test("packed evaluation module imports and loads the bundled corpus", () => {
   const destination = mkdtempSync(path.join(tmpdir(), "ai-slop-pack-"));
   try {
-    const packOutput = execFileSync("npm", ["pack", "--json", "--pack-destination", destination], { encoding: "utf8" });
+    const packOutput = execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", destination], { encoding: "utf8" });
     const rows = JSON.parse(packOutput) as Array<{ filename: string }>;
     const archive = rows[0]?.filename;
     assert.ok(archive);
@@ -61,7 +61,7 @@ test("packed evaluation module imports and loads the bundled corpus", () => {
 test("packed compiled worker scans TypeScript and Python from node_modules", () => {
   const destination = mkdtempSync(path.join(tmpdir(), "ai-slop-entrypoint-pack-"));
   try {
-    const packOutput = execFileSync("npm", ["pack", "--json", "--pack-destination", destination], { encoding: "utf8" });
+    const packOutput = execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", destination], { encoding: "utf8" });
     const rows = JSON.parse(packOutput) as Array<{ filename: string }>;
     const archive = rows[0]?.filename;
     assert.ok(archive);

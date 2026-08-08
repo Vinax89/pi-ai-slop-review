@@ -67,6 +67,13 @@
       }
     },
     "experiments": { "type": "object", "additionalProperties": { "type": "boolean" } },
+    "rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reportOnly": { "type": "array", "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*\\.[a-z0-9-]+$" } }
+      }
+    },
     "verification": {
       "type": "object",
       "additionalProperties": false,

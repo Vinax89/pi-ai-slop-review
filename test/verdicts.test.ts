@@ -6,7 +6,8 @@ import test from "node:test";
 
 import { createScanResult } from "../src/core/schema.ts";
 import { createFindingQueue, parseVerdictLines, verifyVerdicts } from "../src/report.ts";
-import { classifyVerdicts, recordVerdicts, verdictLedger, verdictToFeedbackOutcome } from "../src/verdicts.ts";
+import { classifyVerdicts, recordVerdicts, verdictLedger, verdictManifest, verdictStats, verdictToFeedbackOutcome, writeVerdictManifest } from "../src/verdicts.ts";
+import { readFileSync } from "node:fs";
 import type { FindingDraft } from "../src/types.ts";
 
 function fixture(): string {
@@ -152,6 +153,67 @@ test("verdict outcomes map to conservative feedback outcomes", () => {
   assert.equal(verdictToFeedbackOutcome("confirmed"), "accepted");
   assert.equal(verdictToFeedbackOutcome("dismissed"), "intentional");
   assert.equal(verdictToFeedbackOutcome("needs-context"), "insufficient-evidence");
+});
+
+test("identical verdict re-records are skipped and keep their original timestamp", () => {
+  const root = fixture();
+  const stateRoot = path.join(root, "state");
+  const result = resultWith(root, [draft()]);
+  const finding = result.findings[0];
+
+  const first = recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "redundant wrapper" }], stateRoot);
+  assert.equal(first, 1);
+  const recordedAt = verdictLedger(root, stateRoot)[0].createdAt;
+  const second = recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "redundant wrapper" }], stateRoot);
+  assert.equal(second, 0);
+  assert.equal(verdictLedger(root, stateRoot)[0].createdAt, recordedAt);
+
+  const changed = recordVerdicts(root, result, [{ findingId: finding.id, verdict: "dismissed", evidence: "exported compatibility API" }], stateRoot);
+  assert.equal(changed, 1);
+  assert.equal(verdictLedger(root, stateRoot)[0].verdict, "dismissed");
+});
+
+test("verdict statistics aggregate per rule family", () => {
+  const root = fixture();
+  const stateRoot = path.join(root, "state");
+  const result = resultWith(root, [
+    draft({ ruleId: "errors.suppressed", anchor: "a", line: 1 }),
+    draft({ ruleId: "errors.suppressed", anchor: "b", line: 2 }),
+    draft({ ruleId: "structure.pass-through-wrapper", anchor: "c", line: 3 }),
+  ]);
+  recordVerdicts(root, result, [
+    { findingId: result.findings[0].id, verdict: "confirmed", evidence: "empty catch" },
+    { findingId: result.findings[1].id, verdict: "dismissed", evidence: "documented boundary" },
+    { findingId: result.findings[2].id, verdict: "needs-context", evidence: "contract unavailable" },
+  ], stateRoot);
+  const stats = verdictStats(verdictLedger(root, stateRoot));
+  assert.equal(stats.length, 2);
+  assert.deepEqual(stats[0], { ruleId: "errors.suppressed", total: 2, confirmed: 1, dismissed: 1, needsContext: 0 });
+  assert.deepEqual(stats[1], { ruleId: "structure.pass-through-wrapper", total: 1, confirmed: 0, dismissed: 0, needsContext: 1 });
+  assert.deepEqual(verdictStats([]), []);
+});
+
+test("verdict manifest serializes the delta and writes atomically", () => {
+  const root = fixture();
+  const stateRoot = path.join(root, "state");
+  const result = resultWith(root, [draft()]);
+  const finding = result.findings[0];
+  recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "redundant wrapper" }], stateRoot);
+
+  const delta = classifyVerdicts(result.findings, verdictLedger(root, stateRoot));
+  const manifest = verdictManifest(result, delta);
+  assert.equal(manifest.candidates, 1);
+  assert.equal(manifest.adjudicated.length, 1);
+  assert.equal(manifest.adjudicated[0].status, "same");
+  assert.equal(manifest.adjudicated[0].verdict, "confirmed");
+  assert.equal(manifest.scanId, result.scanId);
+
+  const exportPath = path.join(root, "reports", "verdicts.json");
+  const written = writeVerdictManifest(root, result, delta, exportPath);
+  assert.equal(written, exportPath);
+  const parsed = JSON.parse(readFileSync(exportPath, "utf8")) as { candidates: number; adjudicated: Array<{ findingId: string }> };
+  assert.equal(parsed.candidates, 1);
+  assert.equal(parsed.adjudicated[0].findingId, finding.id);
 });
 
 test("finding queues omit report-only families by default and note the omission", () => {

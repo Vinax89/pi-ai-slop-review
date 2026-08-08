@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { DEFAULT_CONFIG, loadConfig, redactConfig } from "../src/core/config.ts";
 import { diffScans } from "../src/core/ledger.ts";
-import { discoverRepositoryFiles } from "../src/core/discovery.ts";
+import { changedSinceHead, discoverRepositoryFiles } from "../src/core/discovery.ts";
 import { createScanResult, isScanResult, sha256 } from "../src/core/schema.ts";
 import { StateStore } from "../src/core/store.ts";
 import { diagnose, redactSensitive } from "../src/diagnostics.ts";
@@ -44,6 +45,41 @@ function finding(): FindingDraft {
 
 test("repository audits default to a 10,000-file ceiling", () => {
   assert.equal(DEFAULT_CONFIG.limits.maxFiles, 10_000);
+});
+
+test("delta discovery returns only changed source files and excludes deletions", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-slop-delta-"));
+  try {
+    const git = (args: string[]): void => {
+      execFileSync("git", args, { cwd: root, stdio: "ignore" });
+    };
+    git(["init", "-q", "-b", "main"]);
+    git(["config", "user.email", "test@example.test"]);
+    git(["config", "user.name", "test"]);
+    mkdirSync(path.join(root, "src"));
+    writeFileSync(path.join(root, "src/a.ts"), "export const a = 1;\n");
+    writeFileSync(path.join(root, "src/gone.ts"), "export const gone = 1;\n");
+    writeFileSync(path.join(root, "notes.txt"), "not source\n");
+    git(["add", "-A"]);
+    git(["commit", "-qm", "base"]);
+
+    assert.deepEqual(changedSinceHead(root), []);
+
+    writeFileSync(path.join(root, "src/a.ts"), "export const a = 2;\n");
+    rmSync(path.join(root, "src/gone.ts"));
+    writeFileSync(path.join(root, "src/new.py"), "value = 1\n");
+    writeFileSync(path.join(root, "src/ignored.txt"), "still not source\n");
+
+    assert.deepEqual(changedSinceHead(root), ["src/a.ts", "src/new.py"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("delta discovery returns undefined without git and excludes missing files", () => {
+  const root = fixture();
+  writeFileSync(path.join(root, "changed.ts"), "export const changed = 1;\n");
+  assert.equal(changedSinceHead(root), undefined);
 });
 
 test("repository discovery is explicit, bounded, and ignores symlinked or generated dependency trees", () => {
