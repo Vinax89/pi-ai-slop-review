@@ -244,6 +244,8 @@ Published as v1.6.0 (commit `3515978`, tag `v1.6.0`): `latest` on npm (326.9 kB 
 
 Tests: 181/181 (2 new since-audit, 2 new corpus cases, mock-veto mapping). `npm run validate` green; `npm run release:check` green.
 
+Published as v1.7.0 (commit `bb71286`, tag `v1.7.0`): `latest` on npm (330.2 kB tarball, 141 files — now includes `scripts/release-check.mjs`). Local `pi` install updated via `pi install npm:pi-ai-slop-review@1.7.0`. Installed-package smoke in the default environment passed: `since-audit` on the git-less fixture scanned only the newly added file, reported the two prior findings as resolved via the ledger, exit 0. The publish flow confirmed the auth dance the release gate now catches: `npm whoami` succeeds with a stale session but publish needs a fresh `npm login` — the gate fails with exactly that message when auth is missing.
+
 ## Constraints to preserve
 
 - No inferred AI authorship.
