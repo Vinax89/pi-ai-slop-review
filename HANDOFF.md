@@ -231,6 +231,8 @@ Published as v1.5.0 (commit `03b3071`, tag `v1.5.0`): `latest` on npm (325.9 kB 
 
 Tests: 179/179 (one new: report-only suggestion thresholds). `npm run validate` green.
 
+Published as v1.6.0 (commit `3515978`, tag `v1.6.0`): `latest` on npm (326.9 kB tarball, 140 files). Local `pi` install updated via `pi install npm:pi-ai-slop-review@1.6.0` (first attempt failed on registry propagation; retry succeeded). Installed-package smoke in the default environment passed: unscoped `/skill:ai-slop-review` with `defaultScope: "delta"` in the config produced a delta audit of the one changed file, with the verdict ledger carried forward (`unchanged from prior review`), exit 0. Registry publish note: the npm browser-session token expires between sessions — `npm publish` 404s until a fresh `npm login`; run it first, then publish.
+
 ## Constraints to preserve
 
 - No inferred AI authorship.
