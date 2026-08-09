@@ -27,7 +27,7 @@ import { applyProposal, createProposal, listLaboratory, rollbackProposal, valida
 import { addSuppression, recordFeedback, removeSuppression } from "./src/policy/engine.ts";
 import { createFindingQueue, formatClaims, formatDelta, formatReport, formatTimeline, formatTriage, parseVerdictLines, verifyVerdicts } from "./src/report.ts";
 import { scanFilesIsolated } from "./src/isolated-scan.ts";
-import { classifyVerdicts, recordVerdicts, verdictLedger, verdictToFeedbackOutcome, verdictStats, writeVerdictManifest, type VerdictEntry } from "./src/verdicts.ts";
+import { classifyVerdicts, recordVerdicts, suggestReportOnlyRules, verdictLedger, verdictToFeedbackOutcome, verdictStats, writeVerdictManifest, type VerdictEntry } from "./src/verdicts.ts";
 import type { ClaimAssessment, ExperimentSpec, FeedbackRecord, Finding, LedgerEvent, ScanResult, ScanScope } from "./src/types.ts";
 
 const DISABLED = existsSync(fileURLToPath(new URL(".disabled", import.meta.url)));
@@ -899,12 +899,15 @@ export default async function (pi: any): Promise<void> {
       if (signal?.aborted) throw new Error("AI-slop review cancelled");
       if (params.scope !== undefined && params.scope !== "session" && params.scope !== "repository") throw new Error("scope must be session or repository");
       let paths = params.paths?.length ? params.paths : undefined;
-      const mode: ScanScope["mode"] = paths ? "explicit" : params.scope ?? "session";
+      const configuredScope = loadedConfig!.config.defaultScope === "delta" ? "repository" : "session";
+      const requestedScope = params.scope ?? configuredScope;
+      const mode: ScanScope["mode"] = paths ? "explicit" : requestedScope;
       let discoveryTruncated = false;
       let deltaScope = false;
       let deltaUnavailable = false;
       if (mode === "repository") {
-        if (params.delta) {
+        const deltaRequested = Boolean(params.delta) || (params.scope === undefined && params.paths === undefined && loadedConfig!.config.defaultScope === "delta");
+        if (deltaRequested) {
           const changed = changedSinceHead(ctx.cwd);
           if (changed === undefined) {
             deltaUnavailable = true;
@@ -1031,9 +1034,10 @@ export default async function (pi: any): Promise<void> {
     parameters: Type.Object({
       findingId: Type.Optional(Type.String({ description: "Exact finding ID or unique prefix to inspect" })),
       stats: Type.Optional(Type.Boolean({ description: "Append per-rule-family verdict statistics from the whole ledger" })),
+      suggestReportOnly: Type.Optional(Type.Boolean({ description: "Advisory rule families whose verdict history suggests report-only status" })),
       exportPath: Type.Optional(Type.String({ description: "Project-relative path for an atomic JSON verdict manifest export" })),
     }),
-    async execute(_toolCallId: string, params: { findingId?: string; stats?: boolean; exportPath?: string }, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {
+    async execute(_toolCallId: string, params: { findingId?: string; stats?: boolean; suggestReportOnly?: boolean; exportPath?: string }, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {
       ensureInitialized(ctx);
       if (signal?.aborted) throw new Error("AI-slop verdict retrieval cancelled");
       if (!lastOutcome) throw new Error("Run slop_review before requesting verdicts");
@@ -1045,6 +1049,13 @@ export default async function (pi: any): Promise<void> {
         const stats = verdictStats(ledger);
         sections.push("", "VERDICT STATS BY RULE FAMILY",
           ...(stats.length ? stats.map((item) => `- ${item.ruleId}: ${item.total} review(s) — ${item.confirmed} confirmed, ${item.dismissed} dismissed, ${item.needsContext} needs-context`) : ["- no stored verdicts yet"]));
+        if (params.suggestReportOnly) {
+          const suggested = suggestReportOnlyRules(stats);
+          sections.push("", "REPORT-ONLY SUGGESTIONS (advisory)",
+            ...(suggested.length
+              ? suggested.map((ruleId) => `- ${ruleId} was dismissed in most reviews; consider adding it to rules.reportOnly`)
+              : ["- no rule family meets the dismissal threshold yet"]));
+        }
       }
       if (params.exportPath) {
         const exported = writeVerdictManifest(ctx.cwd, lastOutcome.result, delta, params.exportPath);

@@ -21,7 +21,7 @@ pi -e npm:pi-ai-slop-review
 A version-tagged Git installation is also supported:
 
 ```bash
-pi install git:github.com/Vinax89/pi-ai-slop-review@v1.5.0
+pi install git:github.com/Vinax89/pi-ai-slop-review@v1.6.0
 ```
 
 Pi packages execute code with the user's privileges. Review the source and [`docs/security.md`](docs/security.md) before installation.
@@ -79,6 +79,7 @@ Optional global configuration lives at `~/.pi/agent/ai-slop/config.json`. A proj
 ```json
 {
   "schemaVersion": 1,
+  "defaultScope": "delta",
   "execution": {
     "trusted": true,
     "lspServers": { "typescript": ["typescript-language-server", "--stdio"] }
@@ -87,9 +88,14 @@ Optional global configuration lives at `~/.pi/agent/ai-slop/config.json`. A proj
     "sarif": ["reports/results.sarif"],
     "analyzerReports": [{ "kind": "eslint", "path": "reports/eslint.json" }],
     "coverageReports": [{ "kind": "lcov", "path": "coverage/lcov.info" }]
+  },
+  "rules": {
+    "reportOnly": ["assurance.no-linked-tests"]
   }
 }
 ```
+
+`defaultScope` is `session` by default; `delta` makes an unscoped agent review a git-HEAD-scoped repository audit. `rules.reportOnly` lists rule families omitted from the agent finding queue by default; `slop_verdicts` with `suggestReportOnly` proposes additions from verdict history (advisory only).
 
 The extension never installs a missing language server or scanner. LSP startup requires both Pi project trust and `execution.trusted`. Registry requests require `network.enabled` plus an allowlisted registry (`npm`, `pypi`, or `openssf`).
 

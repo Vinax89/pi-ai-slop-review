@@ -16,7 +16,7 @@ Interpret the invocation arguments:
 - File paths: call `slop_review` with `paths`.
 - `audit repository`: call `slop_review` with `scope: "repository"`.
 - `audit repository delta`: call `slop_review` with `scope: "repository"` and `delta: true` to scan only files changed since git HEAD. When git is unavailable the review explicitly falls back to a full audit; when nothing changed since HEAD it says so and stops.
-- Otherwise: call `slop_review` with `scope: "session"`.
+- Otherwise: call `slop_review` without `scope`; the extension applies the configured `defaultScope` (session, or a repository delta audit when the config sets `defaultScope: "delta"`).
 - `full`: adjudicate every candidate in pages of 20, passing `includeReportOnly: true` so report-only families are included. Without `full`, adjudicate up to 20 candidates for session or explicit scope, or one representative per rule family for repository scope.
 
 Explicit paths take precedence over the requested scope. If no session files are tracked, stop and ask for paths or `audit repository`; never silently widen the scan.

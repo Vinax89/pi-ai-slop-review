@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { createScanResult } from "../src/core/schema.ts";
 import { createFindingQueue, parseVerdictLines, verifyVerdicts } from "../src/report.ts";
-import { classifyVerdicts, recordVerdicts, verdictLedger, verdictManifest, verdictStats, verdictToFeedbackOutcome, writeVerdictManifest } from "../src/verdicts.ts";
+import { classifyVerdicts, recordVerdicts, suggestReportOnlyRules, verdictLedger, verdictManifest, verdictStats, verdictToFeedbackOutcome, writeVerdictManifest, type VerdictStats } from "../src/verdicts.ts";
 import { readFileSync } from "node:fs";
 import type { FindingDraft } from "../src/types.ts";
 
@@ -191,6 +191,20 @@ test("verdict statistics aggregate per rule family", () => {
   assert.deepEqual(stats[0], { ruleId: "errors.suppressed", total: 2, confirmed: 1, dismissed: 1, needsContext: 0 });
   assert.deepEqual(stats[1], { ruleId: "structure.pass-through-wrapper", total: 1, confirmed: 0, dismissed: 0, needsContext: 1 });
   assert.deepEqual(verdictStats([]), []);
+});
+
+test("report-only suggestions require enough reviews and a high dismissal rate", () => {
+  const make = (ruleId: string, total: number, dismissed: number): VerdictStats => ({
+    ruleId, total,
+    confirmed: total - dismissed,
+    dismissed,
+    needsContext: 0,
+  });
+  assert.deepEqual(suggestReportOnlyRules([make("noise.rule", 5, 4)]), ["noise.rule"]);
+  assert.deepEqual(suggestReportOnlyRules([make("noise.rule", 5, 3)]), []);
+  assert.deepEqual(suggestReportOnlyRules([make("noise.rule", 4, 4)]), []);
+  assert.deepEqual(suggestReportOnlyRules([make("a.rule", 6, 5), make("b.rule", 6, 1)]), ["a.rule"]);
+  assert.deepEqual(suggestReportOnlyRules([]), []);
 });
 
 test("verdict manifest serializes the delta and writes atomically", () => {

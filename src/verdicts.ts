@@ -114,6 +114,17 @@ export function verdictStats(ledger: VerdictRecord[]): VerdictStats[] {
   return [...groups.values()].sort((left, right) => right.total - left.total);
 }
 
+/**
+ * Advisory report-only candidates: rule families with enough stored verdicts
+ * and a high dismissal rate. Pure signal — the caller decides whether to
+ * apply it to `rules.reportOnly`.
+ */
+export function suggestReportOnlyRules(stats: VerdictStats[], minimumReviews = 5, dismissalRate = 0.75): string[] {
+  return stats
+    .filter((item) => item.total >= minimumReviews && item.dismissed / item.total >= dismissalRate)
+    .map((item) => item.ruleId);
+}
+
 export interface VerdictManifestEntry {
   findingId: string;
   ruleId: string;

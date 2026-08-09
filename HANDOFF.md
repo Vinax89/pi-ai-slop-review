@@ -223,6 +223,14 @@ Tests: 6 new (`report-only config merge`, `delta discovery x2`, `verdict stats`,
 
 Published as v1.5.0 (commit `03b3071`, tag `v1.5.0`): `latest` on npm (325.9 kB tarball, 140 files). Local `pi` install updated to 1.5.0 via `pi install npm:pi-ai-slop-review@1.5.0` — note `pi update --extension` lags the registry metadata cache and did not pick up the new version; explicit-version install is the reliable upgrade path. Installed-package smoke in the default environment passed (exit 0; the evidence-sufficiency bias from v1.4 flipped a previously `needs-context` wrapper to `confirmed` with concrete evidence).
 
+## Follow-up batch (unreleased, candidate v1.6.0)
+
+- **Wired the dead `defaultScope` config** — it was declared, defaulted, validated, and in the schema but never read. `slop_review` now resolves an unscoped call to the configured default: `session` (existing behavior) or `repository` + delta when `defaultScope: "delta"` — and the skill's "otherwise" branch omits `scope` so the config applies. Verified end to end with `PI_AI_SLOP_CONFIG` + unscoped `/skill:ai-slop-review`: delta audit of 1 changed file, unchanged file untouched.
+- **Report-only suggestions** — `slop_verdicts` accepts `suggestReportOnly`; `suggestReportOnlyRules` (verdicts.ts) flags rule families with ≥5 stored verdicts and ≥75% dismissal as advisory additions to `rules.reportOnly`. Pure function + 1 unit test.
+- Skill scope text updated; README config example documents `defaultScope` and `rules.reportOnly`.
+
+Tests: 179/179 (one new: report-only suggestion thresholds). `npm run validate` green.
+
 ## Constraints to preserve
 
 - No inferred AI authorship.
