@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { DEFAULT_CONFIG, loadConfig, redactConfig } from "../src/core/config.ts";
 import { diffScans } from "../src/core/ledger.ts";
-import { changedSinceHead, discoverRepositoryFiles } from "../src/core/discovery.ts";
+import { changedSinceAudit, changedSinceHead, discoverRepositoryFiles } from "../src/core/discovery.ts";
 import { createScanResult, isScanResult, sha256 } from "../src/core/schema.ts";
 import { StateStore } from "../src/core/store.ts";
 import { diagnose, redactSensitive } from "../src/diagnostics.ts";
@@ -80,6 +80,44 @@ test("delta discovery returns undefined without git and excludes missing files",
   const root = fixture();
   writeFileSync(path.join(root, "changed.ts"), "export const changed = 1;\n");
   assert.equal(changedSinceHead(root), undefined);
+});
+
+test("delta since-audit returns mtime-changed and newly discovered source files", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-slop-delta-audit-"));
+  try {
+    mkdirSync(path.join(root, "src"));
+    const firstPath = path.join(root, "src/first.ts");
+    writeFileSync(firstPath, "export const first = 1;\n");
+    const baselineTime = new Date(Date.now() - 60_000);
+    const baseline = {
+      generatedAt: baselineTime.toISOString(),
+      scannedFiles: ["src/first.ts"],
+    };
+    writeFileSync(firstPath, "export const first = 2;\n"); // mtime now, after baseline
+    writeFileSync(path.join(root, "src/second.ts"), "export const second = 1;\n"); // new file
+    writeFileSync(path.join(root, "src/untouched.py"), "value = 1\n");
+
+    const discovered = ["src/first.ts", "src/second.ts", "src/untouched.py", "src/gone.ts"];
+    assert.deepEqual(changedSinceAudit(root, baseline, discovered), ["src/first.ts", "src/second.ts", "src/untouched.py"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("delta since-audit excludes files older than the baseline and unreadable entries", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-slop-delta-audit-"));
+  try {
+    mkdirSync(path.join(root, "src"));
+    const oldPath = path.join(root, "src/old.ts");
+    writeFileSync(oldPath, "export const old = 1;\n");
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const baseline = { generatedAt: past, scannedFiles: ["src/old.ts", "src/missing.ts"] };
+    assert.deepEqual(changedSinceAudit(root, baseline, ["src/old.ts"]), ["src/old.ts"]);
+    const future = new Date(Date.now() + 60_000).toISOString();
+    assert.deepEqual(changedSinceAudit(root, { generatedAt: future, scannedFiles: ["src/old.ts"] }, []), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("repository discovery is explicit, bounded, and ignores symlinked or generated dependency trees", () => {

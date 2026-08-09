@@ -354,19 +354,42 @@
       "actualConfidence": "C2",
       "vetoMatched": null,
       "unsafeAction": false
+    },
+    {
+      "id": "duplicate-identical-ts-train",
+      "repository": "ts-duplicate-train",
+      "language": "typescript",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "expectedConfidence": "C1",
+      "actualConfidence": "C1",
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "duplicate-documented-contracts-ts-train",
+      "repository": "ts-duplicate-train",
+      "language": "typescript",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "actualConfidence": "C1",
+      "vetoMatched": true,
+      "unsafeAction": false
     }
   ],
-  "total": 31,
-  "passed": 31,
-  "hardNegatives": 17,
+  "total": 33,
+  "passed": 33,
+  "hardNegatives": 18,
   "unsafeHardNegativeActions": 0,
   "actionablePrecision": 1,
-  "abstentionRate": 0.8709677419354839,
+  "abstentionRate": 0.8787878787878788,
   "repositoryLeakage": [],
   "bySplit": {
     "train": {
-      "total": 14,
-      "passed": 14,
+      "total": 16,
+      "passed": 16,
       "unsafeHardNegativeActions": 0
     },
     "validation": {
@@ -382,8 +405,8 @@
   },
   "byLanguage": {
     "typescript": {
-      "total": 16,
-      "passed": 16,
+      "total": 18,
+      "passed": 18,
       "unsafeHardNegativeActions": 0
     },
     "javascript": {
@@ -438,12 +461,12 @@
     "arch": "x64"
   },
   "hashes": {
-    "code": "46191127b643d374ce4315eb468220c51b844d3e321246e63b030156cd99dbdf",
-    "corpus": "52158673679ff69606a34ce04327bbebb3283023bde58350a9604b07c71ec069",
+    "code": "8f92bdfb0851c277f8f6744c8d5975af3b11840770e34e05a11ee4ddb0cc50fe",
+    "corpus": "35bbedeb12c563cd8d7933fd13cf26ae0b75f8019ba4a27316782228e0f5e397",
     "rules": "d2f9bcb4bbb9c18df671539c7f1aa2ba3415036bb7e8da71ad825c596d69e578",
-    "library": "e580b7f6b8c3c417e2dcd9f6cd31d9e629d4b7dc8493330c92e94398f3d711d2",
+    "library": "269957342dd315bd24285d148b4d1b879b0c89bf2b6957d07ffcc3fd6a6796e7",
     "schema": "0e4028c5de643e430e3bb8634b38f0bd5a1eefb87460f3a7ffb97d404939bf01",
-    "package": "5a5f3f912f5c8b3a1c0bfcfae951a25b8547ab07400f135ae54c6b417f4e3fe2",
+    "package": "87b43934663774f45bf113ab8a5f4c5ad58c7f3fcdedee2525e55099753ad41d",
     "config": "f40bf8dfca68c87616330a3fe8265a85b7aa9637f03c9b8a1785e92e4fe8e9f5",
     "runtime": "6c68f3a1a23a146c26cb909a41534564123d13a5bc466baf4d727226caf66dec"
   }

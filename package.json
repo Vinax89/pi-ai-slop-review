@@ -1,6 +1,6 @@
 {
   "name": "pi-ai-slop-review",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Evidence-backed review of AI-assisted TypeScript, JavaScript, and Python changes for Pi",
   "license": "Apache-2.0",
   "type": "module",
@@ -57,7 +57,8 @@
     "prepare": "npm run compile",
     "test": "node --experimental-strip-types --experimental-transform-types --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "validate": "npm run build && npm test && npm run evaluate && npm audit --omit=dev"
+    "validate": "npm run build && npm test && npm run evaluate && npm audit --omit=dev",
+    "release:check": "node scripts/release-check.mjs"
   },
   "dependencies": {
     "typescript": "5.9.3"

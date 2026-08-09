@@ -51,6 +51,36 @@ export function discoverRepositoryFiles(rootDir: string, maxFiles: number): { pa
  * when git is unavailable or has no readable HEAD, and an empty array when git
  * works but nothing changed.
  */
+export interface AuditBaselineRef {
+  generatedAt: string;
+  scannedFiles: string[];
+}
+
+/**
+ * Project-relative source files changed since an audit baseline: previously
+ * scanned files whose mtime is newer than the baseline timestamp, plus newly
+ * discovered files. Deleted files are excluded. mtime-based by design — the
+ * persisted baseline does not store per-file hashes.
+ */
+export function changedSinceAudit(rootDir: string, baseline: AuditBaselineRef, discovered: string[]): string[] {
+  const root = realpathSync(rootDir);
+  const baselineTime = Date.parse(baseline.generatedAt);
+  const baselineSet = new Set(baseline.scannedFiles);
+  const changed = new Set<string>();
+  for (const filePath of baseline.scannedFiles) {
+    try {
+      const mtime = statSync(path.resolve(root, filePath)).mtimeMs;
+      if (!Number.isFinite(baselineTime) || mtime > baselineTime) changed.add(filePath);
+    } catch {
+      // Deleted or unreadable files are excluded from the delta.
+    }
+  }
+  for (const filePath of discovered) {
+    if (!baselineSet.has(filePath) && existsSync(path.resolve(root, filePath))) changed.add(filePath);
+  }
+  return [...changed].sort();
+}
+
 export function changedSinceHead(rootDir: string): string[] | undefined {
   try {
     const run = (args: string[]): string[] => {

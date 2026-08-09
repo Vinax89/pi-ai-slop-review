@@ -173,6 +173,12 @@ export async function collectGraphEvidence(
                 .slice(0, 5)
                 .map((item) => `${item.filePath}:${item.qualifiedName}`);
               const omitted = Math.max(0, clones.length - 1 - examples.length);
+              const counterEvidence = ["duplicate bodies may intentionally implement separate contracts or boundaries"];
+              const comments = [node, ...clones]
+                .map((candidate) => String(candidate.metadata?.comment ?? "").trim())
+                .filter(Boolean);
+              const distinctDocumentedContracts = new Set(comments).size > 1;
+              if (distinctDocumentedContracts) counterEvidence.unshift("duplicate bodies carry separate documented contracts in their leading comments");
               const finding = findingForNode(rootDir, node, {
                 anchor: `duplicate:${cloneGroup}`,
                 ruleId: "structure.duplicate-capability",
@@ -182,8 +188,8 @@ export async function collectGraphEvidence(
                 maximumAction: "observe",
                 message: `'${node.qualifiedName}' has an exact normalized body match in ${clones.length - 1} other location(s): ${examples.join(", ")}${omitted ? ` (+${omitted} more)` : ""}`,
                 evidence: ["repository graph found identical normalized function/class body hashes"],
-                counterEvidence: [],
-                unknown: ["duplicate bodies may intentionally implement separate contracts or boundaries"],
+                counterEvidence,
+                unknown: distinctDocumentedContracts ? [] : ["duplicate bodies may intentionally implement separate contracts or boundaries"],
               });
               if (finding) findings.push(finding);
             }

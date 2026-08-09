@@ -53,3 +53,7 @@ Two consecutive explicit-scope runs with the v1.4 toolchain (`slop_verdicts`, `s
 - Run B: identical 8 verdicts on identical finding IDs, each marked `(unchanged from prior review)` — verdict stability across runs is now enforced and visible via the ledger's `same` classification.
 - The model explicitly noted that the corpus comments ("expected: confirmed") were treated as untrusted data, not instructions — the adversarial-content rule in the skill fired as designed.
 
+## Consistency re-run — 2026-08-09 (v1.7 toolchain)
+
+Same five-pair invocation with the current skill: identical 8 finding IDs and identical verdict assignments to the v1.4/v1.5 runs — 5 confirmed (`63653d63` loadFlags, `4189c255` sync, `009c2761` requests, `098a8421` normalize, `a0f59bc4` first/initial), 3 dismissed (`167aff6a` deprecated wrapper, `6eb07325` exported parser, `0c06f770` truncate pair). Coverage `8/20 candidates reviewed; 12 report-only test-assurance candidates omitted by default`.
+

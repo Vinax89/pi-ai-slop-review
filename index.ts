@@ -8,7 +8,7 @@ import { assessScanCompleteness } from "./src/core/completeness.ts";
 import { loadConfig, redactConfig, type LoadedConfig } from "./src/core/config.ts";
 import { assessIntent, formatIntentAssessment, type IntentReviewProfile } from "./src/core/intent.ts";
 import { analyzeForensics, type ForensicInputKind, type ForensicMetrics } from "./src/core/forensics.ts";
-import { changedSinceHead, discoverRepositoryFiles } from "./src/core/discovery.ts";
+import { changedSinceAudit, changedSinceHead, discoverRepositoryFiles } from "./src/core/discovery.ts";
 import { clusterBehaviorEvents, inspectBehaviorEvents, reportDomainPatterns, type BehaviorEvent } from "./src/core/behavior.ts";
 import { checkArtifactConsistency, verifyProvenance } from "./src/core/provenance.ts";
 import { splitCommand as splitCommandPaths } from "./src/core/execution.ts";
@@ -27,31 +27,10 @@ import { applyProposal, createProposal, listLaboratory, rollbackProposal, valida
 import { addSuppression, recordFeedback, removeSuppression } from "./src/policy/engine.ts";
 import { createFindingQueue, formatClaims, formatDelta, formatReport, formatTimeline, formatTriage, parseVerdictLines, verifyVerdicts } from "./src/report.ts";
 import { scanFilesIsolated } from "./src/isolated-scan.ts";
-import { classifyVerdicts, recordVerdicts, suggestReportOnlyRules, verdictLedger, verdictToFeedbackOutcome, verdictStats, writeVerdictManifest, type VerdictEntry } from "./src/verdicts.ts";
+import { classifyVerdicts, formatVerdictDelta, recordVerdicts, suggestReportOnlyRules, verdictLedger, verdictToFeedbackOutcome, verdictStats, writeVerdictManifest, type VerdictEntry } from "./src/verdicts.ts";
 import type { ClaimAssessment, ExperimentSpec, FeedbackRecord, Finding, LedgerEvent, ScanResult, ScanScope } from "./src/types.ts";
 
 const DISABLED = existsSync(fileURLToPath(new URL(".disabled", import.meta.url)));
-
-function formatVerdictDelta(delta: ReturnType<typeof classifyVerdicts>, prefix?: string): string {
-  const selected = prefix
-    ? delta.findings.filter((item) => item.finding.id === prefix || item.finding.id.startsWith(prefix))
-    : delta.findings;
-  const counts = { new: 0, same: 0, stale: 0 };
-  const lines = ["AI-SLOP VERDICT LEDGER"];
-  for (const { finding, classification } of selected) {
-    if (classification.status === "new") {
-      counts.new += 1;
-      lines.push(`- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — NEW (no prior verdict)`);
-    } else {
-      const label = classification.status === "same" ? "same" : "stale";
-      counts[label] += 1;
-      lines.push(`- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — ${label}: ${classification.record.verdict} (${classification.record.createdAt.slice(0, 10)})${classification.status === "stale" ? " — code changed since verdict" : ""}\n  ${classification.record.evidence}`);
-    }
-  }
-  lines.push(`Ledger: ${counts.new} new, ${counts.same} same, ${counts.stale} stale${delta.resolved.length ? `, ${delta.resolved.length} resolved` : ""}`);
-  if (prefix && selected.length !== delta.findings.length) lines.push(`Use an exact finding ID for full details; ${delta.findings.length - selected.length} other finding(s) omitted.`);
-  return lines.join("\n");
-}
 
 const FORENSIC_SOURCE_EXTENSIONS = new Set([
   ".c", ".cc", ".cpp", ".css", ".go", ".h", ".hpp", ".html", ".java", ".js", ".jsx", ".json", ".md", ".mjs", ".py", ".rb", ".rs", ".sh", ".sql", ".swift", ".ts", ".tsx", ".txt", ".vue", ".xml", ".yaml", ".yml",
@@ -882,15 +861,16 @@ export default async function (pi: any): Promise<void> {
           maxItems: 100,
         }),
       ),
-      delta: Type.Optional(Type.Boolean({
-        description: "With repository scope, scan only files changed since git HEAD; falls back to a full audit when git is unavailable",
-      })),
+      delta: Type.Optional(Type.Union([
+        Type.Boolean({ description: "With repository scope, scan only files changed since git HEAD" }),
+        Type.Literal("since-audit", { description: "With repository scope, scan only files changed since the last audit baseline (mtime-based, works without git)" }),
+      ])),
       claims: Type.Optional(Type.String({ description: "Optional completion or review claims to verify against session evidence" })),
     }),
 
     async execute(
       _toolCallId: string,
-      params: { scope?: "session" | "repository"; paths?: string[]; delta?: boolean; claims?: string },
+      params: { scope?: "session" | "repository"; paths?: string[]; delta?: boolean | "since-audit"; claims?: string },
       signal: AbortSignal | undefined,
       onUpdate: ((update: { content: Array<{ type: "text"; text: string }> }) => void) | undefined,
       ctx: { cwd: string; ui: { setStatus(name: string, status: string): void } },
@@ -905,20 +885,42 @@ export default async function (pi: any): Promise<void> {
       let discoveryTruncated = false;
       let deltaScope = false;
       let deltaUnavailable = false;
+      let deltaSinceAudit = false;
       if (mode === "repository") {
-        const deltaRequested = Boolean(params.delta) || (params.scope === undefined && params.paths === undefined && loadedConfig!.config.defaultScope === "delta");
+        const deltaRequested = params.delta !== undefined && params.delta !== false || (params.scope === undefined && params.paths === undefined && loadedConfig!.config.defaultScope === "delta");
         if (deltaRequested) {
-          const changed = changedSinceHead(ctx.cwd);
-          if (changed === undefined) {
-            deltaUnavailable = true;
-          } else if (changed.length === 0) {
-            return {
-              content: [{ type: "text", text: "No supported source changes since git HEAD — nothing to audit. Run a full `audit repository` or pass explicit paths." }],
-              details: undefined,
-            };
+          if (params.delta === "since-audit") {
+            const persisted = store!.load();
+            const baseline = persisted.baselines[AUDIT_BASELINE_NAME] ?? persisted.baselines[REVIEW_BASELINE_NAME];
+            if (!baseline) {
+              deltaUnavailable = true;
+            } else {
+              const discovery = discoverRepositoryFiles(ctx.cwd, loadedConfig!.config.limits.maxFiles);
+              const changed = changedSinceAudit(ctx.cwd, baseline, discovery.paths);
+              discoveryTruncated = discovery.truncated;
+              if (changed.length === 0) {
+                return {
+                  content: [{ type: "text", text: "No supported source changes since the last audit baseline — nothing to audit. Run a full `audit repository` or pass explicit paths." }],
+                  details: undefined,
+                };
+              }
+              paths = changed;
+              deltaScope = true;
+              deltaSinceAudit = true;
+            }
           } else {
-            paths = changed;
-            deltaScope = true;
+            const changed = changedSinceHead(ctx.cwd);
+            if (changed === undefined) {
+              deltaUnavailable = true;
+            } else if (changed.length === 0) {
+              return {
+                content: [{ type: "text", text: "No supported source changes since git HEAD — nothing to audit. Run a full `audit repository` or pass explicit paths." }],
+                details: undefined,
+              };
+            } else {
+              paths = changed;
+              deltaScope = true;
+            }
           }
         }
         if (!paths) {
@@ -937,13 +939,14 @@ export default async function (pi: any): Promise<void> {
         };
       }
       onUpdate?.({ content: [{ type: "text", text: deltaUnavailable
-        ? "Delta audit unavailable (git HEAD not readable); auditing the full repository..."
+        ? "Delta audit unavailable (no git HEAD or no prior audit baseline); auditing the full repository..."
         : deltaScope
-          ? `Auditing ${pathCount} changed file(s) since HEAD (delta)...`
+          ? `Auditing ${pathCount} changed file(s) since ${deltaSinceAudit ? "the last audit baseline" : "HEAD"} (delta)...`
           : `${mode === "repository" ? "Auditing" : "Reviewing"} ${pathCount} file(s)...` }] });
       const outcome = await review(ctx.cwd, paths, signal, params.claims, mode, discoveryTruncated);
-      if (deltaUnavailable) outcome.warnings.push("delta audit unavailable (git HEAD not readable); ran a full repository audit");
-      if (deltaScope) outcome.warnings.push("repository delta audit scoped to files changed since git HEAD");
+      if (deltaUnavailable) outcome.warnings.push("delta audit unavailable (no git HEAD or no prior audit baseline); ran a full repository audit");
+      if (deltaSinceAudit) outcome.warnings.push("repository delta audit scoped to files changed since the last audit baseline (mtime-based)");
+      else if (deltaScope) outcome.warnings.push("repository delta audit scoped to files changed since git HEAD");
       if (discoveryTruncated) outcome.warnings.push(`repository discovery stopped at ${loadedConfig!.config.limits.maxFiles} files; result completeness is partial`);
       lastOutcome = outcome;
       ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} findings · ${outcome.delta.added.length} new`);

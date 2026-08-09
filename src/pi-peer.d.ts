@@ -26,7 +26,8 @@ declare module "typebox" {
     String(options?: SchemaOptions): unknown;
     Boolean(options?: SchemaOptions): unknown;
     Number(options?: SchemaOptions): unknown;
-    Literal(value: string | number | boolean): unknown;
+    Literal(value: string | number | boolean, options?: SchemaOptions): unknown;
     Record(key: unknown, value: unknown): unknown;
+    Union(schemas: unknown[], options?: SchemaOptions): unknown;
   };
 }

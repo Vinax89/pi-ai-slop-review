@@ -93,6 +93,28 @@ export function verdictToFeedbackOutcome(verdict: Verdict): FeedbackRecord["outc
   return "insufficient-evidence";
 }
 
+export function formatVerdictDelta(delta: VerdictDelta, prefix?: string): string {
+  const selected = prefix
+    ? delta.findings.filter((item) => item.finding.id === prefix || item.finding.id.startsWith(prefix))
+    : delta.findings;
+  const resolved = prefix ? delta.resolved.filter((record) => record.findingId === prefix || record.findingId.startsWith(prefix)) : delta.resolved;
+  const counts = { new: 0, same: 0, stale: 0 };
+  const lines = ["AI-SLOP VERDICT LEDGER"];
+  for (const { finding, classification } of selected) {
+    if (classification.status === "new") {
+      counts.new += 1;
+      lines.push(`- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — NEW (no prior verdict)`);
+    } else {
+      const label = classification.status === "same" ? "same" : "stale";
+      counts[label] += 1;
+      lines.push(`- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — ${label}: ${classification.record.verdict} (${classification.record.createdAt.slice(0, 10)})${classification.status === "stale" ? " — code changed since verdict" : ""}\n  ${classification.record.evidence}`);
+    }
+  }
+  lines.push(`Ledger: ${counts.new} new, ${counts.same} same, ${counts.stale} stale${resolved.length ? `, ${resolved.length} resolved` : ""}`);
+  if (prefix && selected.length !== delta.findings.length) lines.push(`Use an exact finding ID for full details; ${delta.findings.length - selected.length} other finding(s) omitted.`);
+  return lines.join("\n");
+}
+
 export interface VerdictStats {
   ruleId: string;
   total: number;

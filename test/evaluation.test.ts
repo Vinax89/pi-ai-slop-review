@@ -17,7 +17,9 @@ function finding(corpusCase: CorpusCase, confidence = corpusCase.expected_confid
       ? ["wrapper declares an explicit return contract"]
       : corpusCase.veto === "overload"
         ? ["symbol has declarations or overloads"]
-        : [];
+        : corpusCase.veto === "separate documented contracts"
+          ? ["duplicate bodies carry separate documented contracts in their leading comments"]
+          : [];
   return {
     anchor: corpusCase.anchor,
     ruleId: corpusCase.rule_id,

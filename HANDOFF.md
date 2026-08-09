@@ -233,6 +233,17 @@ Tests: 179/179 (one new: report-only suggestion thresholds). `npm run validate` 
 
 Published as v1.6.0 (commit `3515978`, tag `v1.6.0`): `latest` on npm (326.9 kB tarball, 140 files). Local `pi` install updated via `pi install npm:pi-ai-slop-review@1.6.0` (first attempt failed on registry propagation; retry succeeded). Installed-package smoke in the default environment passed: unscoped `/skill:ai-slop-review` with `defaultScope: "delta"` in the config produced a delta audit of the one changed file, with the verdict ledger carried forward (`unchanged from prior review`), exit 0. Registry publish note: the npm browser-session token expires between sessions — `npm publish` 404s until a fresh `npm login`; run it first, then publish.
 
+## Feature batch (unreleased, candidate v1.7.0)
+
+1. **Release gate** — `scripts/release-check.mjs` (`npm run release:check`): fails with a clear "run `npm login`" on missing auth, asserts version consistency across package.json/shrinkwrap/README tag, runs `validate`, and verifies pack contents (SKILL.md, `dist/src/verdicts.js`, fixtures excluded). Verified passing end to end.
+2. **`formatVerdictDelta` prefix fix** — extracted to `src/verdicts.ts`; with a `findingId` prefix, `resolved` entries are now filtered consistently instead of listing every resolved record.
+3. **`delta: "since-audit"`** — repository audits scoped to files changed since the last audit baseline (mtime-based on previously scanned files + newly discovered files; works without git, requires a prior baseline). `changedSinceAudit` in `src/core/discovery.ts`. Verified end to end on a git-less fixture: full audit baseline → exactly the 2 changed/new files scanned, exit 0. Skill scope text documents `audit repository since-audit`.
+4. **GitHub Actions CI** — `.github/workflows/validate.yml`: `npm ci` + `npm run validate` on push/PR, matrix node 22 + 24 (verified node 22.23.1 runs the suite).
+5. **Detector regression hardening** — `structure.duplicate-capability` now extracts leading comments into graph node metadata and adds counterevidence "duplicate bodies carry separate documented contracts" when a clone group has distinct doc comments (unknown cleared accordingly). Two corpus cases added to `library/cases.jsonl`: identical multi-statement bodies → flag (waste_candidate, C1, observe); same-body distinct JSDoc contracts → hard negative with veto "separate documented contracts". Corpus: 33/33 pass, 0 unsafe actions.
+6. **Corpus consistency re-run (v1.7)** — acceptance pairs re-run with the current skill: identical 8 finding IDs and identical verdict assignments (5 confirmed, 3 dismissed) to the v1.4/v1.5 runs; coverage `8/20 candidates reviewed; 12 report-only test-assurance candidates omitted by default`.
+
+Tests: 181/181 (2 new since-audit, 2 new corpus cases, mock-veto mapping). `npm run validate` green; `npm run release:check` green.
+
 ## Constraints to preserve
 
 - No inferred AI authorship.

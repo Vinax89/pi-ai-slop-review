@@ -134,6 +134,21 @@ function frameworkMetadata(name: string, exported: boolean, sourceFile: ts.Sourc
   };
 }
 
+/** Leading doc/block comment for a declaration, normalized to its text, or undefined. */
+function leadingComment(source: string, node: ts.Node): string | undefined {
+  const ranges = ts.getLeadingCommentRanges(source, node.getFullStart());
+  if (!ranges?.length) return undefined;
+  const text = ranges
+    .map((range) => source.slice(range.pos, range.end))
+    .join("\n")
+    .replace(/\/\*+|\*+\//g, "")
+    .split("\n")
+    .map((line) => line.replace(/^\s*\*+ ?/, "").trim())
+    .join(" ")
+    .trim();
+  return text || undefined;
+}
+
 function configPathForFile(rootDir: string, filePath: string): string | undefined {
   const configPath = ts.findConfigFile(path.dirname(filePath), ts.sys.fileExists, "tsconfig.json") ?? ts.findConfigFile(path.dirname(filePath), ts.sys.fileExists, "jsconfig.json");
   return configPath && normalizePath(configPath).startsWith(`${normalizePath(rootDir)}/`) ? configPath : undefined;
@@ -263,7 +278,7 @@ function extractTypescript(
             exported,
             signature: checker.typeToString(checker.getTypeAtLocation(nameNode)),
             bodyHash: bodyHash(node),
-            metadata: frameworkMetadata(name, exported, sourceFile),
+            metadata: { ...frameworkMetadata(name, exported, sourceFile), comment: leadingComment(source, node) },
           };
           nodes.push(graphNode);
           declarationNodes.set(node, graphNode);
