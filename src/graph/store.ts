@@ -202,6 +202,14 @@ export class GraphStore {
       : this.database.prepare("SELECT * FROM edges ORDER BY file_path, id").all();
     return rows.map(rowEdge);
   }
+
+  fileNodes(): GraphNode[] {
+    return this.database.prepare("SELECT * FROM nodes WHERE kind = 'file' ORDER BY file_path").all().map(rowNode);
+  }
+
+  importEdges(): GraphEdge[] {
+    return this.database.prepare("SELECT * FROM edges WHERE kind = 'imports' ORDER BY file_path, id").all().map(rowEdge);
+  }
   *edgePages(filePath: string, pageSize = 500): Generator<GraphEdge[]> {
     let after = "";
     while (true) {
@@ -293,10 +301,14 @@ export class GraphStore {
 
   private migrate(): void {
     const version = Number((this.database.prepare("PRAGMA user_version").get() as any).user_version);
-    if (version > 2) throw new Error(`graph database schema ${version} is newer than supported schema 2`);
-    if (version === 2) return;
+    if (version > 3) throw new Error(`graph database schema ${version} is newer than supported schema 3`);
+    if (version === 3) return;
+    if (version === 2) {
+      this.database.exec("CREATE INDEX IF NOT EXISTS nodes_kind_idx ON nodes(kind); CREATE INDEX IF NOT EXISTS edges_kind_idx ON edges(kind); PRAGMA user_version=3;");
+      return;
+    }
     if (version === 1) {
-      this.database.exec("ALTER TABLE files ADD COLUMN content_hash TEXT; PRAGMA user_version=2;");
+      this.database.exec("ALTER TABLE files ADD COLUMN content_hash TEXT; CREATE INDEX IF NOT EXISTS nodes_kind_idx ON nodes(kind); CREATE INDEX IF NOT EXISTS edges_kind_idx ON edges(kind); PRAGMA user_version=3;");
       return;
     }
     this.database.exec(`
@@ -334,9 +346,11 @@ export class GraphStore {
       CREATE INDEX nodes_file_idx ON nodes(file_path);
       CREATE INDEX nodes_name_idx ON nodes(name);
       CREATE INDEX nodes_body_idx ON nodes(body_hash);
+      CREATE INDEX nodes_kind_idx ON nodes(kind);
       CREATE INDEX edges_from_idx ON edges(from_id);
       CREATE INDEX edges_to_idx ON edges(to_id);
-      PRAGMA user_version=2;
+      CREATE INDEX edges_kind_idx ON edges(kind);
+      PRAGMA user_version=3;
     `);
   }
 }

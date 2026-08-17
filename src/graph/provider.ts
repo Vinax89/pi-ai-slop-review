@@ -6,7 +6,7 @@ import { createScanResult, fingerprint, normalizePath } from "../core/schema.ts"
 import { offsetRange, safeProjectFile } from "../providers/files.ts";
 import { SCHEMA_VERSION, type EvidenceRecord, type FindingDraft, type ScanResult, type ScanScope, type SkippedFile, type SourceRange } from "../types.ts";
 import type { TypeScriptProjectContext } from "../typescript-scanner.ts";
-import { importCycles } from "./analysis.ts";
+import { formatImportCycle, importCycles } from "./analysis.ts";
 import { buildGraphFacts } from "./build.ts";
 import { GraphStore } from "./store.ts";
 import type { GraphNode, PublicSurfaceEntry } from "./types.ts";
@@ -153,8 +153,9 @@ export async function collectGraphEvidence(
     const reportedCloneGroups = new Set<string>();
 
     if (mode === "repository" && !skipped.length) {
-      const allNodes = store.nodes();
-      for (const cycle of importCycles(allNodes, store.edges())) {
+      const allNodes = store.fileNodes().filter((node) => reviewedFiles.has(node.filePath));
+      const scopedEdges = store.importEdges().filter((edge) => reviewedFiles.has(edge.filePath));
+      for (const cycle of importCycles(allNodes, scopedEdges)) {
         if (cycle.typeOnlyEdgeIds.length === cycle.edgeIds.length) continue;
         if (findings.length >= config.limits.maxFindings) break;
         const representative = allNodes.find((node) => node.kind === "file" && node.filePath === cycle.files[0]);
@@ -166,7 +167,7 @@ export async function collectGraphEvidence(
           confidence: "C2",
           risk: "R2",
           maximumAction: "observe",
-          message: `Resolved imports form a cycle across ${cycle.files.length} file(s): ${cycle.files.join(" -> ")}`,
+          message: `Resolved imports form a cycle across ${cycle.files.length} file(s): ${formatImportCycle(cycle.files)}`,
           evidence: ["complete repository graph contains a strongly connected component with at least one runtime import"],
           counterEvidence: ["some cycles are intentional registration, compatibility, or package-boundary arrangements"],
           unknown: cycle.typeOnlyEdgeIds.length

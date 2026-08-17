@@ -34,6 +34,19 @@ function matches(filePath: string, patterns: string[]): boolean {
   });
 }
 
+function typeOnlyModuleEdge(node: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
+  if (ts.isExportDeclaration(node)) {
+    if (node.isTypeOnly) return true;
+    return Boolean(node.exportClause && ts.isNamedExports(node.exportClause) && node.exportClause.elements.length > 0 &&
+      node.exportClause.elements.every((element) => element.isTypeOnly));
+  }
+  const clause = node.importClause;
+  if (!clause) return false;
+  if (clause.isTypeOnly) return true;
+  return !clause.name && Boolean(clause.namedBindings && ts.isNamedImports(clause.namedBindings) && clause.namedBindings.elements.length > 0 &&
+    clause.namedBindings.elements.every((element) => element.isTypeOnly));
+}
+
 function nodeId(filePath: string, kind: GraphNodeKind, qualifiedName: string): string {
   return fingerprint("graph-node", { filePath, kind, qualifiedName });
 }
@@ -321,9 +334,7 @@ function extractTypescript(
           const targetId = resolved && normalizePath(path.resolve(resolved)).startsWith(`${normalizePath(rootDir)}/`)
             ? nodeId(normalizePath(path.relative(rootDir, resolved)), "file", normalizePath(path.relative(rootDir, resolved)))
             : fingerprint("graph-dependency", { specifier });
-          const typeOnly = ts.isImportDeclaration(node)
-            ? Boolean(node.importClause?.isTypeOnly)
-            : node.isTypeOnly;
+          const typeOnly = typeOnlyModuleEdge(node);
           edges.push(edge(filePath, rootNode.id, targetId, "imports", resolved ? "C3" : "C2", { specifier, resolved: resolved ? normalizePath(path.relative(rootDir, resolved)) : undefined, typeOnly }));
         }
         if (ts.isCallExpression(node)) {

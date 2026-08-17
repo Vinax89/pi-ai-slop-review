@@ -455,6 +455,12 @@ function scanCatchClauses(sourceFile: ts.SourceFile, sourceHash: string, root: s
 
 function scanExplicitPlaceholders(sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
   const findings: FindingDraft[] = [];
+  const displayName = (node: ts.FunctionLikeDeclaration): string => {
+    if (node.name && ts.isIdentifier(node.name)) return node.name.text;
+    if (ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) return node.parent.name.text;
+    if (ts.isPropertyAssignment(node.parent) && (ts.isIdentifier(node.parent.name) || ts.isStringLiteralLike(node.parent.name))) return node.parent.name.text;
+    return "anonymous function";
+  };
   const visit = (node: ts.Node): void => {
     const functionNode = ts.isFunctionLike(node) ? node as ts.FunctionLikeDeclaration : undefined;
     const body = functionNode?.body;
@@ -465,7 +471,7 @@ function scanExplicitPlaceholders(sourceFile: ts.SourceFile, sourceHash: string,
         ? expression.arguments?.[0]
         : undefined;
       if (message && ts.isStringLiteralLike(message) && /\b(?:not implemented|todo|placeholder)\b/i.test(message.text)) {
-        const name = (functionNode?.name && ts.isIdentifier(functionNode.name) ? functionNode.name.text : undefined) ?? "anonymous function";
+        const name = displayName(functionNode!);
         findings.push(finding(sourceFile, sourceHash, root, statement, {
           anchor: structuralAnchor(node, "explicit-placeholder"),
           ruleId: "structure.explicit-placeholder",

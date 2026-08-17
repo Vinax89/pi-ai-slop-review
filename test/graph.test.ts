@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import * as ts from "typescript";
@@ -88,6 +89,27 @@ test("repository graph reports runtime import cycles only for complete repositor
   writeFileSync(path.join(root, "src/b.ts"), "import type { A } from './a.js';\nexport interface B { a?: A }\n");
   const typeOnly = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
   assert.equal(typeOnly.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+
+  writeFileSync(path.join(root, "src/a.ts"), "import { type B } from './b.js';\nexport interface A { b?: B }\n");
+  writeFileSync(path.join(root, "src/b.ts"), "export { type A } from './a.js';\nexport interface B { value: string }\n");
+  const specifierTypeOnly = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
+  assert.equal(specifierTypeOnly.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+
+  writeFileSync(path.join(root, "src/a.ts"), "import { type B, value } from './b.js';\nexport const a = value;\nexport interface A { b?: B }\n");
+  writeFileSync(path.join(root, "src/b.ts"), "import type { A } from './a.js';\nexport const value = 1;\nexport interface B { a?: A }\n");
+  const mixed = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
+  assert.ok(mixed.findings.some((item) => item.ruleId === "dependency.import-cycle"));
+});
+
+test("repository cycle analysis excludes retained graph facts outside the current scope", async () => {
+  const { root, state, config } = fixture();
+  writeFileSync(path.join(root, "src/a.ts"), "import { b } from './b.js';\nexport const a = b;\n");
+  writeFileSync(path.join(root, "src/b.ts"), "import { a } from './a.js';\nexport const b = a;\n");
+  writeFileSync(path.join(root, "src/current.ts"), "export const current = 1;\n");
+  const initial = await collectGraphEvidence(root, ["src/a.ts", "src/b.ts"], config, undefined, state, "repository");
+  assert.ok(initial.findings.some((item) => item.ruleId === "dependency.import-cycle"));
+  const narrowed = await collectGraphEvidence(root, ["src/current.ts"], config, undefined, state, "repository");
+  assert.equal(narrowed.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
 });
 
 test("graph batches parse each TypeScript project once and persist in one transaction", async () => {
@@ -122,6 +144,8 @@ test("graph batches parse each TypeScript project once and persist in one transa
   assert.equal(store.updateFiles(built.facts), paths.length);
   assert.equal(store.updateFiles(built.facts), 0);
   assert.equal(store.statistics().files, paths.length);
+  assert.ok(store.fileNodes().every((node) => node.kind === "file"));
+  assert.ok(store.importEdges().every((edge) => edge.kind === "imports"));
   const nodePages = [...store.nodePages(7)];
   assert.ok(nodePages.length > 1);
   assert.equal(nodePages.flat().length, store.statistics().nodes);
@@ -132,6 +156,25 @@ test("graph batches parse each TypeScript project once and persist in one transa
   assert.ok(edgePages.length > 1);
   assert.equal(edgePages.flat().length, store.edges(paths[0]).length);
   store.close();
+});
+
+test("graph store migrates v2 databases to indexed cycle queries", () => {
+  const { root, state } = fixture();
+  const initial = new GraphStore(root, state);
+  const databasePath = initial.databasePath;
+  initial.close();
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec("DROP INDEX IF EXISTS nodes_kind_idx; DROP INDEX IF EXISTS edges_kind_idx; PRAGMA user_version=2;");
+  legacy.close();
+  const migrated = new GraphStore(root, state);
+  migrated.close();
+  const checked = new DatabaseSync(databasePath, { readOnly: true });
+  assert.equal(Number((checked.prepare("PRAGMA user_version").get() as { user_version: number }).user_version), 3);
+  const nodeIndexes = checked.prepare("PRAGMA index_list(nodes)").all().map((row: any) => String(row.name));
+  const edgeIndexes = checked.prepare("PRAGMA index_list(edges)").all().map((row: any) => String(row.name));
+  checked.close();
+  assert.ok(nodeIndexes.includes("nodes_kind_idx"));
+  assert.ok(edgeIndexes.includes("edges_kind_idx"));
 });
 
 test("graph builder streams fact batches without retaining the aggregate", async () => {

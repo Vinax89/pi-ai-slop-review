@@ -5,6 +5,8 @@
 - Add independent, dependency-free repository import-cycle analysis over resolved graph edges.
 - Preserve type-only edge provenance, suppress all-type-only cycles, and require complete repository scope before emitting cycle candidates.
 - Detect explicit placeholder-only TypeScript/JavaScript function bodies as context-dependent observations.
+- Harden graph analysis against per-specifier type imports, stale out-of-scope facts, deep graphs, control-character paths, and oversized cycle summaries.
+- Add indexed cycle queries, actionable arrow-function names, and positive/hard-negative placeholder evaluation cases.
 
 ## 2.0.1
 

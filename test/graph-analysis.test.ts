@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { fingerprint } from "../src/core/schema.ts";
-import { importCycles } from "../src/graph/analysis.ts";
+import { formatImportCycle, importCycles } from "../src/graph/analysis.ts";
 import type { GraphEdge, GraphNode } from "../src/graph/types.ts";
 
 function file(filePath: string): GraphNode {
@@ -37,4 +37,15 @@ test("import cycle analysis detects self-imports and omits ordinary DAGs", () =>
   const b = file("src/b.ts");
   assert.deepEqual(importCycles([a, b], [imports(a, b)]), []);
   assert.deepEqual(importCycles([a], [imports(a, a)]).map((cycle) => cycle.files), [["src/a.ts"]]);
+});
+
+test("import cycle analysis handles deep graphs without recursion and bounds hostile labels", () => {
+  const nodes = Array.from({ length: 12_000 }, (_, index) => file(`src/${index}.ts`));
+  const edges = nodes.slice(0, -1).map((node, index) => imports(node, nodes[index + 1]!));
+  edges.push(imports(nodes.at(-1)!, nodes[0]!));
+  assert.equal(importCycles(nodes, edges)[0]?.files.length, nodes.length);
+  const summary = formatImportCycle(["src/a\nforged.ts", ...Array.from({ length: 20 }, (_, index) => `src/${"x".repeat(180)}-${index}.ts`)]);
+  assert.equal(/[\n\r]/.test(summary), false);
+  assert.ok(summary.length < 1_100);
+  assert.match(summary, /\(\+13 more\)$/);
 });
