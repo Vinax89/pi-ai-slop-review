@@ -4,7 +4,7 @@ Run `npm run release:check` for the local build, test, deterministic evaluation,
 
 ## Runtime requirements
 
-- Node.js 22.7 or newer; Node 24 is tested. The evaluation, benchmark, and test scripts use `--experimental-strip-types --experimental-transform-types`.
+- Node.js 22.7 or newer. The evaluation, benchmark, and test scripts use erasable TypeScript with `--experimental-strip-types`, which also remains compatible with Node 26 where `--experimental-transform-types` has been removed.
 - Python 3.11–3.13 for Python AST and `tomllib` manifest analysis.
 - Git for patch laboratories.
 - Bubblewrap on Linux for patch/formal execution. Unsupported hosts abstain from those operations.

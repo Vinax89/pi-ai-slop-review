@@ -50,14 +50,16 @@
     "npm-shrinkwrap.json"
   ],
   "scripts": {
-    "benchmark": "node --expose-gc --experimental-strip-types --experimental-transform-types src/evaluation/benchmark.ts",
+    "benchmark": "node --expose-gc --experimental-strip-types src/evaluation/benchmark.ts",
     "build": "npm run typecheck && npm run compile",
     "compile": "node scripts/prepare-dist.mjs && tsc -p tsconfig.build.json",
-    "evaluate": "node --experimental-strip-types --experimental-transform-types src/evaluation/cli.ts",
-    "evaluate:e2e": "node --experimental-strip-types --experimental-transform-types src/evaluation/harness-cli.ts",
+    "evaluate": "node --experimental-strip-types src/evaluation/cli.ts",
+    "evaluate:e2e": "node --experimental-strip-types src/evaluation/harness-cli.ts",
+    "evaluate:repositories:sync": "node --experimental-strip-types src/evaluation/repository-sync-cli.ts",
+    "evaluate:repositories": "node --experimental-strip-types src/evaluation/repository-cli.ts",
     "lifecycle": "node scripts/lifecycle.mjs",
     "prepare": "npm run compile",
-    "test": "node --experimental-strip-types --experimental-transform-types --test test/*.test.ts",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "validate": "npm run build && npm test && npm run evaluate && npm audit --omit=dev",
     "release:check": "node scripts/release-check.mjs"

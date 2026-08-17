@@ -30,5 +30,13 @@ The corpus is a regression suite, not a claim of population-level accuracy. Real
 
 Live-provider results are experimental observations, not a release gate or a claim of cross-provider reliability. After the 2026-08-17 policy audit corrected two labels that had treated missing caller/contract evidence as proof, the recorded smoke transcripts achieved exact 8/8 tool coverage with both DeepSeek V4 Pro and OpenAI GPT-5.6 Sol, while matching 8/8 and 6/8 private verdict labels respectively; repeatability was not established. Deterministic scanner gates remain separate and must not be presented as LLM adjudication accuracy.
 
+## Private real-repository corpus
+
+Real-repository expansion lives outside the package tree. Set `SLOP_REPOSITORY_MANIFEST` to an external manifest matching `schema/repository-corpus-manifest.schema.json`, then run `npm run evaluate:repositories:sync` and `npm run evaluate:repositories`. The manifest pins each repository to a full commit and one repository-level split. Training and validation checkouts must have the exact credential-free HTTPS origin, exact commit, and no tracked or untracked changes.
+
+Normal synchronization and collection intentionally skip the holdout and fail if its checkout exists. This prevents accidental observation before the skill version and evaluation protocol are frozen. The collector copies only bounded, tracked source/configuration files into a model-visible fixture tree; it excludes Git metadata, symlinks, hard links, special files, oversized files, labels, and reviewer identities. It revalidates each checkout after collection to detect drift.
+
+The generated index keeps deterministic scan results separate from human labels. Candidate selection uses a fixed 60/40 training/validation target and balances detector families and repositories where the available findings permit. Clean control files are sampled separately. `review-template.json` may be regenerated, while `reviewer-a.json` and `reviewer-b.json` are preserved once they contain human work; a changed case set then fails closed instead of overwriting annotations. Two reviewers label independently, disagreements are adjudicated only after both sheets are complete, and deterministic scanner metrics remain separate from later LLM-adjudication metrics.
+
 ## Performance
 `npm run benchmark` measures a deterministic 40-file TypeScript fixture, asserts cold/warm scan correctness and complete coverage plus graph-query identity, records cold/warm federated scans, graph query latency, RSS change, runtime metadata, and writes the same expanded input hashes to `artifacts/benchmark.json`. Targets are directional and cannot justify weaker correctness or safety.

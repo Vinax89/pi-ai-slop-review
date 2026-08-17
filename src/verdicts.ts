@@ -2,7 +2,7 @@ import { closeSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, write
 import path from "node:path";
 
 import { StateStore } from "./core/store.ts";
-import { fingerprint } from "./core/schema.ts";
+import { fingerprint, providerRunsForIdentity } from "./core/schema.ts";
 import { assessScanCompleteness } from "./core/completeness.ts";
 import { isInside, nearestExistingParent } from "./core/paths.ts";
 import { queryContext } from "./graph/query.ts";
@@ -75,7 +75,7 @@ export function adjudicationContextFingerprint(
     },
     repositoryContextHash: scan.scope.contentHash,
     scope: scan.scope,
-    providers: scan.providers,
+    providers: providerRunsForIdentity(scan.providers),
     evidence,
     graphContext,
     completeness: scan.completeness ?? assessScanCompleteness(scan),

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createScanResult } from "../src/core/schema.ts";
+import { createScanResult, scanIdFor } from "../src/core/schema.ts";
 import { createFindingQueue, parseVerdictLines, verifyVerdicts } from "../src/report.ts";
 import { adjudicationContextFingerprint, classifyVerdicts, formatVerdictDelta, recordVerdicts, suggestReportOnlyRules, verdictLedger, verdictManifest, verdictStats, verdictToFeedbackOutcome, writeVerdictManifest, type VerdictStats } from "../src/verdicts.ts";
 import { readFileSync } from "node:fs";
@@ -82,6 +82,19 @@ test("unchanged finding source is invalidated when caller context changes", () =
   const second = resultWith(root, [draft()], "repository", ["input.ts", "caller.ts"]);
   assert.equal(first.findings[0].sourceHash, second.findings[0].sourceHash);
   assert.equal(classifyVerdicts(root, second, verdictLedger(root, stateRoot)).findings[0].classification.status, "context-changed");
+});
+
+test("scan and adjudication identities ignore provider timing jitter", () => {
+  const root = fixture();
+  const first = resultWith(root, [draft()]);
+  const second = resultWith(root, [draft()]);
+  first.providers[0]!.durationMs = 1;
+  second.providers[0]!.durationMs = 999;
+  assert.equal(scanIdFor(first), scanIdFor(second));
+  assert.equal(
+    adjudicationContextFingerprint(root, first, first.findings[0]!),
+    adjudicationContextFingerprint(root, second, second.findings[0]!),
+  );
 });
 
 test("verdict verification catches unknown IDs, mismatches, and count drift", () => {

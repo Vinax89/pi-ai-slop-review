@@ -171,12 +171,16 @@ export function createFinding(
     evidenceRecords: [...positive, ...counter],
   };
 }
+export function providerRunsForIdentity(providers: readonly ProviderRun[]): Array<Omit<ProviderRun, "durationMs">> {
+  return providers.map(({ durationMs: _durationMs, ...provider }) => provider);
+}
+
 export function scanIdFor(result: Omit<ScanResult, "scanId">): string {
   return fingerprint("scan", {
     engine: result.engine,
     engineVersion: result.engineVersion,
     scope: result.scope,
-    providers: result.providers,
+    providers: providerRunsForIdentity(result.providers),
     evidenceRecords: result.evidenceRecords,
     scannedFiles: result.scannedFiles,
     findings: result.findings,

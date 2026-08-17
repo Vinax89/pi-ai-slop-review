@@ -4,7 +4,7 @@ A skill-first Pi package for evidence-backed LLM review of TypeScript, JavaScrip
 
 ## Requirements
 
-Requires Node.js 22.7 or newer because the package's TypeScript entry points use Node's type stripping and type transformation runtime flags. Node 24 is tested.
+Requires Node.js 22.7 or newer because the package's TypeScript entry points use Node's erasable type stripping. The scripts are compatible with Node 22 through Node 26.
 
 The Pi TUI, TypeBox, and optional critic API integrations are declared as optional peer modules. The package entrypoint can be inspected or imported without those host peers; the Pi integration loads its UI/schema peers only when the extension factory runs, and critic support reports a clear missing-peer error only when `/slop_critics` is invoked.
 
@@ -120,6 +120,8 @@ npm run validate
 ```
 
 Generated evaluation and performance evidence is written under `artifacts/`. The evidence library is in `library/`.
+
+Private real-repository corpus work uses an external manifest and separate checkout, fixture, and label directories. `npm run evaluate:repositories:sync` freezes only training and validation repositories at declared commits; `npm run evaluate:repositories` creates bounded source-only fixtures, balanced candidate cases, clean controls, and independent reviewer sheets. Both commands refuse a present holdout checkout during ordinary corpus work. See [`docs/evaluation.md`](docs/evaluation.md); no repository source, label, or private manifest is shipped in the npm package.
 
 ## Documentation
 

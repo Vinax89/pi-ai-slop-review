@@ -73,7 +73,7 @@ Raw `/slop-review` and `/slop-audit` commands remain deterministic scanner inter
 
 ```text
 npm run typecheck
-node --experimental-strip-types --experimental-transform-types --test test/interfaces.test.ts test/packaging.test.ts
+node --experimental-strip-types --test test/interfaces.test.ts test/packaging.test.ts
 ```
 
 Result: 18/18 focused tests passed.

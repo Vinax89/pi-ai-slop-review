@@ -62,12 +62,13 @@ execFileSync("npm", ["run", "benchmark"], { stdio: "inherit" });
 const packJson = JSON.parse(execFileSync("npm", ["pack", "--ignore-scripts", "--dry-run", "--json"], { encoding: "utf8" }));
 const pack = Array.isArray(packJson) ? packJson[0] : Object.values(packJson)[0];
 const packedPaths = pack.files.map((file) => file.path);
-const required = ["skills/ai-slop-review/SKILL.md", "dist/src/verdicts.js", "dist/src/isolated-scan.js", "index.ts"];
+const required = ["skills/ai-slop-review/SKILL.md", "dist/src/verdicts.js", "dist/src/isolated-scan.js", "dist/src/evaluation/repository-corpus.js", "schema/repository-corpus-manifest.schema.json", "index.ts"];
 for (const file of required) {
   if (!packedPaths.includes(file)) fail(`packed package is missing ${file}`);
 }
 if (packedPaths.some((file) => file.startsWith("artifacts/verdict-corpus"))) fail("packed package must not contain artifacts/verdict-corpus fixtures");
 if (packedPaths.some((file) => file.startsWith("evaluation-private/"))) fail("packed package must not contain private verdict labels");
+if (packedPaths.some((file) => /(?:repository-manifest\.json|reviewer-[ab]\.json|repository-index\.json|\/fixtures\/)/.test(file))) fail("packed package must not contain private repository corpus inputs or labels");
 console.log(`pack: ${pack.files.length} files, ${pack.unpackedSize} bytes unpacked, contents verified`);
 
 console.log("release-check passed — publish with `npm publish` (interactive; OTP/browser auth may be required).");

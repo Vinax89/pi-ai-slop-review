@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an external-manifest real-repository corpus pipeline with frozen repository-level splits, strict checkout provenance, holdout non-observation, bounded source-only fixtures, balanced candidate/control sampling, and independently preserved private review sheets.
+- Keep private repository source and labels outside the npm package, and ship a strict corpus-manifest schema plus packaging/release privacy gates.
+- Remove the retired Node type-transformation flag so development and evaluation scripts remain compatible through Node 26.
+- Exclude provider timing jitter from scan and adjudication-context identities while retaining provider status, capabilities, versions, and diagnostics.
 - Add independent, dependency-free repository import-cycle analysis over resolved graph edges.
 - Preserve type-only edge provenance, suppress all-type-only cycles, and require complete repository scope before emitting cycle candidates.
 - Detect explicit placeholder-only TypeScript/JavaScript function bodies as context-dependent observations.

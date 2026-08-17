@@ -68,7 +68,7 @@ class ScanTransport {
   constructor(runtime: IsolatedRuntimeOptions) {
     if (runtime.workerUrl) {
       this.worker = new Worker(runtime.workerUrl, {
-        execArgv: ["--experimental-strip-types", "--experimental-transform-types"],
+        execArgv: ["--experimental-strip-types"],
         resourceLimits: {
           maxOldGenerationSizeMb: runtime.maxOldGenerationSizeMb ?? DEFAULT_OLD_GENERATION_MB,
           maxYoungGenerationSizeMb: 64,
@@ -90,7 +90,6 @@ class ScanTransport {
       execArgv: [
         "--experimental-strip-types",
         "--expose-gc",
-        "--experimental-transform-types",
         "--max-semi-space-size=2",
         "--optimize-for-size",
         `--max-old-space-size=${runtime.maxOldGenerationSizeMb ?? DEFAULT_OLD_GENERATION_MB}`,
