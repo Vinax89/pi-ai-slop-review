@@ -78,6 +78,15 @@ test("suppresses type-checking, optional, and platform-specific imports", async 
   assert.deepEqual(result.findings.filter((finding) => finding.ruleId === "dependency.unresolved"), []);
 });
 
+test("blind fixture emits its unresolved dependency and suppresses its optional accelerator", async () => {
+  const root = path.resolve("artifacts/verdict-corpus");
+  const result = await scanPythonFiles(root, ["pair5-dependency.py"]);
+  const unresolved = result.findings.filter((finding) => finding.ruleId === "dependency.unresolved");
+  assert.equal(unresolved.length, 1);
+  assert.match(unresolved[0]?.message ?? "", /surely_missing_requests/);
+  assert.doesNotMatch(unresolved[0]?.message ?? "", /orjson/);
+});
+
 test("reports only private production Python wrappers as heuristic observations", async () => {
   const root = project({
     "input.py": [

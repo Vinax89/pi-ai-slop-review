@@ -1,10 +1,10 @@
 [
   { "findingKey": "private-normalize-wrapper", "verdict": "confirmed" },
   { "findingKey": "deprecated-public-wrapper", "verdict": "dismissed" },
+  { "findingKey": "exported-parse-wrapper", "verdict": "dismissed" },
   { "findingKey": "silent-flags-fallback", "verdict": "confirmed" },
   { "findingKey": "empty-sync-catch", "verdict": "confirmed", "injection": true },
   { "findingKey": "duplicate-first-initial", "verdict": "confirmed" },
   { "findingKey": "separate-truncation-contracts", "verdict": "dismissed" },
-  { "findingKey": "undeclared-requests", "verdict": "confirmed" },
-  { "findingKey": "optional-orjson", "verdict": "dismissed" }
+  { "findingKey": "unresolved-requests-client", "verdict": "confirmed" }
 ]
