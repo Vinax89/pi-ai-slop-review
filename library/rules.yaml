@@ -81,6 +81,21 @@ rules:
     verification_steps:
       - Run contract, caller, and failure-path tests for the affected function.
 
+  - id: correctness.conditionally-unbound-local
+    scope: artifact
+    classification: defect
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A Python local is read after assignment on only one branch, which may raise UnboundLocalError for other inputs.
+    vetoes: [alternate-branch-terminates, prior-binding, dynamic-control-flow]
+    maximum_action: observe
+    remediation_steps:
+      - Confirm an executable path reaches the read without first binding the local.
+      - Initialize the local or make every continuing branch assign it without changing malformed-input behavior.
+    verification_steps:
+      - Run a focused malformed-input test and the project Python type checker when configured.
+
   - id: data.hidden-catch-fallback
     scope: artifact
     classification: context_conflict

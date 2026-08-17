@@ -99,7 +99,7 @@ test("repository graph reports runtime import cycles only for complete repositor
   writeFileSync(path.join(root, "src/a.ts"), "import { type B, value } from './b.js';\nexport const a = value;\nexport interface A { b?: B }\n");
   writeFileSync(path.join(root, "src/b.ts"), "import type { A } from './a.js';\nexport const value = 1;\nexport interface B { a?: A }\n");
   const mixed = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
-  assert.ok(mixed.findings.some((item) => item.ruleId === "dependency.import-cycle"));
+  assert.equal(mixed.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
 });
 
 test("partial scans preserve unseen graph facts while complete scans prune them", async () => {
@@ -256,7 +256,14 @@ test("repository graph summarizes duplicate groups once with bounded examples", 
   for (const [index, filePath] of paths.entries()) {
     writeFileSync(path.join(root, filePath), `export function clone${index}(value: number) { const adjusted = value + 1; return adjusted * 2; }\n`);
   }
-  const ignoredPaths = ["tests/clone-a.ts", "tests/clone-b.ts", "backend/alembic/versions/0001_a.py", "backend/alembic/versions/0002_b.py"];
+  const ignoredPaths = [
+    "tests/clone-a.ts",
+    "tests/clone-b.ts",
+    "backend/alembic/versions/0001_a.py",
+    "backend/alembic/versions/0002_b.py",
+    "benchmark/fixtures/reference/clone-a.ts",
+    "benchmark/fixtures/reference/clone-b.ts",
+  ];
   for (const filePath of ignoredPaths) {
     mkdirSync(path.dirname(path.join(root, filePath)), { recursive: true });
     writeFileSync(path.join(root, filePath), filePath.endsWith(".py")

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -36,6 +36,43 @@ test("uses TypeScript resolution and ignores Node builtins", () => {
   assert.equal(unresolved.length, 1);
   assert.match(unresolved[0].message, /not-a-real-package/);
   assert.equal(unresolved[0].confidence, "C3");
+});
+
+test("treats dependencies declared by the nearest workspace package as resolvable", () => {
+  const root = project({
+    "frontend/package.json": JSON.stringify({
+      dependencies: { react: "^19.0.0" },
+      devDependencies: { "@testing-library/react": "^16.0.0" },
+      peerDependencies: { next: "^15.0.0" },
+      optionalDependencies: { sonner: "^2.0.0" },
+    }),
+    "frontend/src/input.ts": [
+      "import React from 'react';",
+      "import Next from 'next/navigation';",
+      "import { toast } from 'sonner';",
+      "import { render } from '@testing-library/react';",
+      "import missing from 'not-declared-anywhere';",
+      "void React; void Next; void toast; void render; void missing;",
+    ].join("\n"),
+  });
+  const unresolved = scanTypeScriptFiles(root, ["frontend/src/input.ts"]).findings.filter(
+    (finding) => finding.ruleId === "dependency.unresolved",
+  );
+  assert.equal(unresolved.length, 1);
+  assert.match(unresolved[0]?.message ?? "", /not-declared-anywhere/);
+});
+
+test("does not trust a package manifest symlink that escapes the scan root", () => {
+  const root = project({ "input.ts": "import value from 'outside-only';\nvoid value;\n" });
+  const external = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-external-manifest-"));
+  const externalManifest = path.join(external, "package.json");
+  writeFileSync(externalManifest, JSON.stringify({ dependencies: { "outside-only": "1.0.0" } }));
+  symlinkSync(externalManifest, path.join(root, "package.json"));
+  const unresolved = scanTypeScriptFiles(root, ["input.ts"]).findings.filter(
+    (finding) => finding.ruleId === "dependency.unresolved",
+  );
+  assert.equal(unresolved.length, 1);
+  assert.match(unresolved[0]?.message ?? "", /outside-only/);
 });
 
 test("honors tsconfig path aliases", () => {

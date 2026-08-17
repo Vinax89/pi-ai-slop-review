@@ -69,12 +69,13 @@ The scanner federates a TypeScript `Program`/`TypeChecker`, an isolated Python s
 
 - unresolved modules
 - simple pass-through wrapper candidates
-- empty or log-only catch clauses
-- catch clauses returning safe-looking fallbacks
-- complete-scope runtime import-cycle candidates, with type-only edges retained as counterevidence
+- empty, log-only, or validation-skipping exception handlers
+- catch clauses and quiet post-handler paths returning safe-looking fallbacks
+- complete-scope runtime import-cycle candidates built only from runtime edges
+- Python locals read after assignment under only an `isinstance` guard
 - explicit placeholder-only function bodies, with unsupported-operation and subclass contracts left for adjudication
 
-Python wrapper findings remain observation-only because repository-wide dynamic references are not proven. Python imports guarded by `TYPE_CHECKING`, `ImportError`, or platform conditions are excluded. External analyzer fixes are retained only as evidence.
+Python wrapper findings remain observation-only because repository-wide dynamic references are not proven. Python imports guarded by `TYPE_CHECKING`, `ImportError`, or platform conditions are excluded; PEP 735 dependency groups are treated as declarations. Bare TypeScript imports declared by the nearest workspace package are not reported merely because dependencies are absent from the scanner environment. External analyzer fixes are retained only as evidence.
 
 Optional global configuration lives at `~/.pi/agent/ai-slop/config.json`. A project may provide `.pi/ai-slop.json`, but Pi ignores it until the project is explicitly trusted. Example:
 

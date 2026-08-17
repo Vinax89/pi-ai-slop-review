@@ -191,6 +191,54 @@ function isGenerated(filePath: string, text: string): boolean {
   return /(?:@generated|generated file|do not edit)/i.test(text.slice(0, 500));
 }
 
+function externalPackageName(specifier: string): string | undefined {
+  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("#")) return undefined;
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? (parts.length >= 2 ? `${parts[0]}/${parts[1]}` : undefined) : parts[0];
+}
+
+function isDeclaredWorkspacePackage(
+  root: string,
+  filePath: string,
+  specifier: string,
+  manifests: Map<string, Set<string> | null>,
+): boolean {
+  const packageName = externalPackageName(specifier);
+  if (!packageName) return false;
+  let directory = path.dirname(filePath);
+  while (isInside(root, directory)) {
+    const manifestPath = path.join(directory, "package.json");
+    if (existsSync(manifestPath)) {
+      let declared = manifests.get(manifestPath);
+      if (declared === undefined) {
+        try {
+          const realManifestPath = realpathSync(manifestPath);
+          if (!isInside(root, realManifestPath)) throw new Error("package manifest resolves outside the scan root");
+          const document = JSON.parse(readFileSync(realManifestPath, "utf8")) as Record<string, unknown>;
+          declared = new Set<string>();
+          if (typeof document.name === "string") declared.add(document.name);
+          for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+            const entries = document[field];
+            if (entries && typeof entries === "object" && !Array.isArray(entries)) {
+              for (const name of Object.keys(entries)) declared.add(name);
+            }
+          }
+          manifests.set(manifestPath, declared);
+        } catch {
+          declared = null;
+          manifests.set(manifestPath, null);
+        }
+      }
+      if (declared?.has(packageName)) return true;
+    }
+    if (directory === root) break;
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return false;
+}
+
 function isExported(checker: ts.TypeChecker, sourceFile: ts.SourceFile, name: ts.Identifier, node: ts.Node): boolean {
   const container = ts.isVariableDeclaration(node) && ts.isVariableDeclarationList(node.parent)
     ? node.parent.parent
@@ -506,7 +554,13 @@ function scanExplicitPlaceholders(project: Project, sourceFile: ts.SourceFile, s
   return findings;
 }
 
-function scanImports(project: Project, sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
+function scanImports(
+  project: Project,
+  sourceFile: ts.SourceFile,
+  sourceHash: string,
+  root: string,
+  manifests: Map<string, Set<string> | null>,
+): FindingDraft[] {
   const findings: FindingDraft[] = [];
   const semanticDiagnostics = project.program.getSemanticDiagnostics(sourceFile);
   const visit = (node: ts.Node): void => {
@@ -522,7 +576,7 @@ function scanImports(project: Project, sourceFile: ts.SourceFile, sourceHash: st
       const isRuntimeBuiltin = BUILTINS.has(spec) || /^(?:https?|bun|deno):/.test(spec);
       const isExistingRelativeResource = spec.startsWith(".") && existsSync(path.resolve(path.dirname(sourceFile.fileName), spec));
       const symbol = canonicalSymbol(project.checker, project.checker.getSymbolAtLocation(specifier));
-      const resolved = isRuntimeBuiltin || isExistingRelativeResource ||
+      const resolved = isRuntimeBuiltin || isExistingRelativeResource || isDeclaredWorkspacePackage(root, sourceFile.fileName, spec, manifests) ||
         Boolean(ts.resolveModuleName(spec, sourceFile.fileName, project.options, ts.sys).resolvedModule || symbol);
       if (!resolved) {
         const location = nodeLocation(sourceFile, specifier);
@@ -641,6 +695,7 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
   if (retainProjects) projects.push(project);
   const hashes = new Map<string, string>();
   const validFiles = new Set<string>();
+  const manifests = new Map<string, Set<string> | null>();
 
   for (const file of files) {
     if (options.signal?.aborted) break;
@@ -666,7 +721,7 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
     scannedFiles.push(display);
     if (findings.length < maxFindings) {
       const remaining = maxFindings - findings.length;
-      findings.push(...scanImports(project, sourceFile, sourceHash, root).slice(0, remaining));
+      findings.push(...scanImports(project, sourceFile, sourceHash, root, manifests).slice(0, remaining));
     }
     if (findings.length < maxFindings) {
       const remaining = maxFindings - findings.length;

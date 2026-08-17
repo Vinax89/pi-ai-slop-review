@@ -30,6 +30,7 @@ test("import cycle analysis retains type-only edge provenance", () => {
   const typeEdge = { ...imports(a, b), metadata: { typeOnly: true } };
   const result = importCycles([a, b], [typeEdge, imports(b, a)]);
   assert.equal(result[0]?.typeOnlyEdgeCount, 1);
+  assert.deepEqual(importCycles([a, b], [typeEdge, imports(b, a)], 10, true), []);
 });
 
 test("import cycle analysis summarizes high-multiplicity edges as counts", () => {

@@ -54,6 +54,18 @@ test("resolves stdlib, local, declared, workspace, and inline-script imports", a
   }
 });
 
+test("resolves dependencies declared in PEP 735 dependency groups", async () => {
+  const root = project({
+    "pyproject.toml": "[project]\nname = 'fixture'\nversion = '0.0.0'\n\n[dependency-groups]\ndev = ['pytest>=8', 'basedpyright>=1.20']\n",
+    "input.py": "import pytest\nimport basedpyright\nimport genuinely_missing\n",
+  });
+  const unresolved = (await scanPythonFiles(root, ["input.py"])).findings.filter(
+    (finding) => finding.ruleId === "dependency.unresolved",
+  );
+  assert.equal(unresolved.length, 1);
+  assert.match(unresolved[0]?.message ?? "", /genuinely_missing/);
+});
+
 test("suppresses type-checking, optional, and platform-specific imports", async () => {
   const root = project({
     "input.py": [
@@ -242,6 +254,83 @@ test("treats named and annotated boolean fallbacks as intentional predicate outc
   });
   const findings = await scanPythonFiles(root, ["input.py"]);
   assert.equal(findings.findings.some((finding) => finding.ruleId === "data.hidden-catch-fallback"), false);
+});
+
+test("detects post-handler fallbacks, validator skips, and conditionally unbound locals", async () => {
+  const root = project({
+    "check_inputs.py": [
+      "def _canonical_repo(path):",
+      "    try:",
+      "        return path.read_text()",
+      "    except OSError:",
+      "        pass",
+      "    return 'owner/repository'",
+      "def parse_inputs(paths):",
+      "    for path in paths:",
+      "        try:",
+      "            path.read_text()",
+      "        except OSError:",
+      "            continue",
+      "def parse(document):",
+      "    if isinstance(document, dict):",
+      "        layout = document.get('layout')",
+      "    return layout",
+    ].join("\n"),
+  });
+  const findings = (await scanPythonFiles(root, ["check_inputs.py"])).findings;
+  assert.equal(findings.filter((finding) => finding.ruleId === "data.hidden-catch-fallback").length, 1);
+  assert.equal(findings.filter((finding) => finding.ruleId === "errors.suppressed").length, 1);
+  assert.equal(findings.filter((finding) => finding.ruleId === "correctness.conditionally-unbound-local").length, 1);
+});
+
+test("does not flag documented best-effort skips or locals assigned on every branch", async () => {
+  const root = project({
+    "input.py": [
+      "def validate_optional(paths):",
+      "    for path in paths:",
+      "        try:",
+      "            path.read_text()",
+      "        except OSError:  # Optional input is best-effort.",
+      "            continue",
+      "def parse(document):",
+      "    if isinstance(document, dict):",
+      "        layout = document.get('layout')",
+      "    else:",
+      "        layout = None",
+      "    return layout",
+      "def scoped(values, enabled):",
+      "    global CACHE",
+      "    if enabled:",
+      "        CACHE = 1",
+      "        labels = [item for item in values]",
+      "    result = [item for item in values]",
+      "    return CACHE, result",
+      "def terminating(enabled):",
+      "    if enabled:",
+      "        value = 1",
+      "    else:",
+      "        raise ValueError('disabled')",
+      "    return value",
+      "def correlated(enabled):",
+      "    ready = False",
+      "    if enabled:",
+      "        value = 1",
+      "        ready = True",
+      "    if ready:",
+      "        return value",
+      "    return None",
+      "def _matches_value(value):",
+      "    try:",
+      "        if parse(value):",
+      "            return True",
+      "    except ValueError:",
+      "        pass",
+      "    return False",
+    ].join("\n"),
+  });
+  const findings = (await scanPythonFiles(root, ["input.py"])).findings;
+  assert.equal(findings.some((finding) => finding.ruleId === "errors.suppressed"), false);
+  assert.equal(findings.some((finding) => finding.ruleId === "correctness.conditionally-unbound-local"), false);
 });
 
 test("skips generated and syntactically invalid Python", async () => {

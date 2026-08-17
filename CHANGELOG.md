@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Resolve bare TypeScript imports against the nearest workspace package manifest and Python imports against PEP 735 dependency groups before reporting missing dependencies.
+- Build runtime-cycle components from runtime edges only, so type-only return edges cannot manufacture a runtime cycle.
+- Exclude fixture trees from exact-body duplicate candidates while retaining production duplicate observations.
+- Detect quiet post-handler fallbacks, exception-skipped validation inputs, and narrowly proven Python locals that escape an `isinstance` guard without assignment.
+- Add synthetic positive and hard-negative regressions derived from independently reviewed real-repository calibration, without shipping repository source or labels.
 - Add an external-manifest real-repository corpus pipeline with frozen repository-level splits, strict checkout provenance, holdout non-observation, bounded source-only fixtures, balanced candidate/control sampling, and independently preserved private review sheets.
 - Keep private repository source and labels outside the npm package, and ship a strict corpus-manifest schema plus packaging/release privacy gates.
 - Remove the retired Node type-transformation flag so development and evaluation scripts remain compatible through Node 26.

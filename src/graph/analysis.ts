@@ -29,6 +29,7 @@ export function importCycles(nodes: GraphNode[], edges: GraphEdge[], maxCycles =
   const reverse = new Map<string, Set<string>>();
   for (const edge of edges) {
     if (edge.kind !== "imports" || !filesById.has(edge.fromId) || !filesById.has(edge.toId)) continue;
+    if (runtimeOnly && edge.metadata.typeOnly === true) continue;
     const outgoing = adjacency.get(edge.fromId) ?? [];
     outgoing.push({ to: edge.toId, typeOnly: edge.metadata.typeOnly === true });
     adjacency.set(edge.fromId, outgoing);
@@ -93,7 +94,7 @@ export function importCycles(nodes: GraphNode[], edges: GraphEdge[], maxCycles =
       edgeCount: internalEdges.length,
       typeOnlyEdgeCount: internalEdges.filter((edge) => edge.typeOnly).length,
     };
-    if (!runtimeOnly || cycle.typeOnlyEdgeCount < cycle.edgeCount) cycles.push(cycle);
+    cycles.push(cycle);
     if (cycles.length >= limit) break;
   }
   return cycles;

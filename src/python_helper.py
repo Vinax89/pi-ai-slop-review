@@ -218,6 +218,7 @@ def declared_dependencies(root: Path, file_path: Path) -> set[str]:
             project = document.get("project", {})
             groups = [project.get("dependencies", [])]
             groups.extend(project.get("optional-dependencies", {}).values())
+            groups.extend(document.get("dependency-groups", {}).values())
             groups.append(document.get("tool", {}).get("poetry", {}).get("dependencies", {}).keys())
             for group in groups:
                 for item in group:
@@ -349,6 +350,83 @@ def module_binds_name(tree: ast.AST, name: str) -> bool:
     return False
 
 
+class _NameEvents(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.events: list[tuple[int, int, str, str, ast.Name]] = []
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            kind = "load"
+        elif isinstance(node.ctx, (ast.Store, ast.Del)):
+            kind = "store"
+        else:
+            return
+        self.events.append((getattr(node, "lineno", 0), getattr(node, "col_offset", 0), kind, node.id, node))
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        return
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        return
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        return
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        return
+
+
+def statement_name_events(statements: list[ast.stmt]) -> list[tuple[int, int, str, str, ast.Name]]:
+    visitor = _NameEvents()
+    for statement in statements:
+        visitor.visit(statement)
+    return sorted(visitor.events, key=lambda event: (event[0], event[1], 0 if event[2] == "load" else 1))
+
+
+def conditionally_unbound_uses(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[ast.Name, str]]:
+    arguments = {
+        argument.arg
+        for argument in [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
+    }
+    if function.args.vararg is not None:
+        arguments.add(function.args.vararg.arg)
+    if function.args.kwarg is not None:
+        arguments.add(function.args.kwarg.arg)
+    external_names = {
+        name
+        for statement in function.body
+        if isinstance(statement, (ast.Global, ast.Nonlocal))
+        for name in statement.names
+    }
+    bound = set(arguments) | external_names
+    results: list[tuple[ast.Name, str]] = []
+    for index, statement in enumerate(function.body):
+        if isinstance(statement, ast.If) and isinstance(statement.test, ast.Call) and name_is(statement.test.func, {"isinstance"}):
+            body_stores = {name for _, _, kind, name, _ in statement_name_events(statement.body) if kind == "store"}
+            else_stores = {name for _, _, kind, name, _ in statement_name_events(statement.orelse) if kind == "store"}
+            alternate_terminates = bool(statement.orelse) and isinstance(statement.orelse[-1], (ast.Return, ast.Raise))
+            candidates = set() if alternate_terminates else body_stores - else_stores - bound
+            later_events = statement_name_events(function.body[index + 1 :])
+            for name in sorted(candidates):
+                first = next((event for event in later_events if event[3] == name), None)
+                if first is not None and first[2] == "load":
+                    results.append((first[4], name))
+        bound.update(name for _, _, kind, name, _ in statement_name_events([statement]) if kind == "store")
+    return results
+
+
 def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     lines = source.splitlines(keepends=True)
@@ -405,6 +483,26 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
                         message=f"Function '{node.name}' forwards unchanged arguments to '{call_target(call)}'",
                         evidence=["Python AST confirms one return call with identity argument mapping"],
                         unknown=["Python exports, decorators, dynamic references, and repository-wide callers are not proven"],
+                    )
+                )
+
+            for use, name in conditionally_unbound_uses(node):
+                findings.append(
+                    finding(
+                        root=root,
+                        file_path=file_path,
+                        source=source,
+                        lines=lines,
+                        node=use,
+                        anchor=structural_anchor(use, parents, "conditionally-unbound-local"),
+                        rule_id="correctness.conditionally-unbound-local",
+                        classification="defect",
+                        confidence="C2",
+                        risk="R2",
+                        maximum_action="observe",
+                        message=f"Local '{name}' is read after being assigned on only one branch",
+                        evidence=["Python AST finds no prior binding and no assignment in the alternate branch"],
+                        unknown=["dynamic termination and exception paths require contextual review"],
                     )
                 )
 
@@ -465,6 +563,38 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
             explicitly_intentional = explicitly_intentional or documented_boundary
             broad_exception = node.type is None or name_is(node.type, {"Exception", "BaseException"})
             fallback = body[-1].value if body and isinstance(body[-1], ast.Return) else None
+            try_statement = parents.get(node)
+            post_try_fallback = None
+            if isinstance(try_statement, ast.Try) and isinstance(parents.get(try_statement), (ast.FunctionDef, ast.AsyncFunctionDef)):
+                container = parents[try_statement]
+                statement_index = container.body.index(try_statement)
+                if statement_index + 1 < len(container.body):
+                    following = container.body[statement_index + 1]
+                    handlers_are_quiet = all(
+                        handler.body and all(isinstance(item, ast.Pass) or log_statement(item) for item in handler.body)
+                        for handler in try_statement.handlers
+                    )
+                    try_returns = any(isinstance(item, ast.Return) for statement in try_statement.body for item in ast.walk(statement))
+                    if (
+                        node is try_statement.handlers[0]
+                        and handlers_are_quiet
+                        and try_returns
+                        and isinstance(following, ast.Return)
+                        and safe_fallback(following.value)
+                    ):
+                        post_try_fallback = following
+            post_try_predicate = False
+            if post_try_fallback is not None and isinstance(post_try_fallback.value, ast.Constant) and isinstance(post_try_fallback.value.value, bool) and function is not None:
+                predicate_contract = (
+                    (isinstance(function.returns, ast.Name) and function.returns.id == "bool")
+                    or function.name.lstrip("_").startswith(("is_", "has_", "can_", "supports_", "exists_", "matches_"))
+                )
+                opposite = not post_try_fallback.value.value
+                post_try_predicate = predicate_contract and isinstance(try_statement, ast.Try) and any(
+                    isinstance(item, ast.Return) and isinstance(item.value, ast.Constant) and item.value.value is opposite
+                    for statement in try_statement.body
+                    for item in ast.walk(statement)
+                )
             if (
                 fallback is not None
                 and safe_fallback(fallback)
@@ -491,6 +621,55 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
                         message="Except handler converts failure into a safe-looking return value",
                         evidence=["exception path ends in a literal or empty success-looking fallback"],
                         unknown=["caller contract and whether the fallback is intentionally visible"],
+                    )
+                )
+            elif post_try_fallback is not None and not post_try_predicate and not explicitly_intentional and not self_check:
+                findings.append(
+                    finding(
+                        root=root,
+                        file_path=file_path,
+                        source=source,
+                        lines=lines,
+                        node=post_try_fallback,
+                        anchor=structural_anchor(node, parents, "except-post-fallback"),
+                        rule_id="data.hidden-catch-fallback",
+                        classification="context_conflict",
+                        confidence="C2",
+                        risk="R3",
+                        maximum_action="observe",
+                        message="Exception path continues into a safe-looking fallback return",
+                        evidence=["try path returns data while quiet handlers fall through to a literal or empty fallback"],
+                        unknown=["caller contract and whether the fallback is intentionally visible"],
+                    )
+                )
+            elif (
+                body
+                and len(body) == 1
+                and isinstance(body[0], ast.Continue)
+                and function is not None
+                and (
+                    re.match(r"^(?:check|validate|verify|audit|test)(?:_|$)", function.name.lstrip("_"))
+                    or re.match(r"^(?:check|validate|verify|audit|test)(?:_|$)", file_path.stem.lstrip("_"))
+                )
+                and not explicitly_intentional
+                and not self_check
+            ):
+                findings.append(
+                    finding(
+                        root=root,
+                        file_path=file_path,
+                        source=source,
+                        lines=lines,
+                        node=node,
+                        anchor=structural_anchor(node, parents, "except-validation-skip"),
+                        rule_id="errors.suppressed",
+                        classification="context_conflict",
+                        confidence="C2",
+                        risk="R2",
+                        maximum_action="observe",
+                        message="Validation loop skips an input after an exception",
+                        evidence=["exception handler continues the enclosing validation loop without recording a failure"],
+                        unknown=["whether skipped inputs are explicitly optional or best-effort"],
                     )
                 )
             elif (
