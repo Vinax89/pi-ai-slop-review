@@ -1,5 +1,4 @@
-// Pair 4: true duplicate implementation vs same-body separate contracts.
-// Member A (expected: confirmed) — identical body, identical contract, both exported.
+// Duplicate implementations and same-body functions with separate contracts.
 export function first(values: number[]): number | undefined {
   if (values.length === 0) return undefined;
   return values[0];
@@ -10,7 +9,6 @@ export function initial(values: number[]): number | undefined {
   return values[0];
 }
 
-// Member B (expected: dismissed) — identical body shape, distinct documented contracts.
 /** Truncates to at most 80 columns for display. */
 export function truncateDisplay(text: string): string {
   if (text.length <= 80) return text;

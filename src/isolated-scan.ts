@@ -62,6 +62,8 @@ class ScanTransport {
   private readonly worker?: Worker;
   private readonly child?: ChildProcess;
   private readonly childExitListeners = new Map<(code: number) => void, (code: number | null) => void>();
+  private terminalError?: Error & { code?: string };
+  private terminalExit?: number;
 
   constructor(runtime: IsolatedRuntimeOptions) {
     if (runtime.workerUrl) {
@@ -72,6 +74,8 @@ class ScanTransport {
           maxYoungGenerationSizeMb: 64,
         },
       });
+      this.worker.on("error", (error: Error & { code?: string }) => { this.terminalError = error; });
+      this.worker.on("exit", (code) => { this.terminalExit = code; });
       return;
     }
     const entry = import.meta.url.endsWith(".ts") && import.meta.url.includes("/node_modules/")
@@ -94,6 +98,8 @@ class ScanTransport {
       serialization: "advanced",
       stdio: ["ignore", "ignore", "inherit", "ipc"],
     });
+    this.child.on("error", (error: Error & { code?: string }) => { this.terminalError = error; });
+    this.child.on("exit", (code) => { this.terminalExit = code ?? 1; });
   }
 
   ref(): void {
@@ -111,9 +117,16 @@ class ScanTransport {
   }
   onMessage(listener: (value: unknown) => void): void { this.worker?.on("message", listener); this.child?.on("message", listener); }
   offMessage(listener: (value: unknown) => void): void { this.worker?.off("message", listener); this.child?.off("message", listener); }
-  onceError(listener: (error: Error & { code?: string }) => void): void { this.worker?.once("error", listener); this.child?.once("error", listener); }
+  onceError(listener: (error: Error & { code?: string }) => void): void {
+    if (this.terminalError) queueMicrotask(() => listener(this.terminalError!));
+    else { this.worker?.once("error", listener); this.child?.once("error", listener); }
+  }
   offError(listener: (error: Error & { code?: string }) => void): void { this.worker?.off("error", listener); this.child?.off("error", listener); }
   onceExit(listener: (code: number) => void): void {
+    if (this.terminalExit !== undefined) {
+      queueMicrotask(() => listener(this.terminalExit!));
+      return;
+    }
     if (this.worker) this.worker.once("exit", listener);
     if (this.child) {
       const wrapped = (code: number | null): void => listener(code ?? 1);
@@ -182,14 +195,7 @@ function workerKey(runtime: IsolatedRuntimeOptions): string {
 
 function startWorker(runtime: IsolatedRuntimeOptions): WorkerSession {
   const worker = new ScanTransport(runtime);
-  const created = { worker, key: workerKey(runtime), jobs: 0 };
-  worker.onceError(() => {
-    if (session?.worker === worker) session = undefined;
-  });
-  worker.onceExit(() => {
-    if (session?.worker === worker) session = undefined;
-  });
-  return created;
+  return { worker, key: workerKey(runtime), jobs: 0 };
 }
 
 async function workerFor(runtime: IsolatedRuntimeOptions): Promise<WorkerSession> {
@@ -301,6 +307,9 @@ async function runIsolated(
   if (first.kind === "success") return first.result;
   if (first.kind === "budget") return failedScan(request, "isolated scan worker exceeded its time or CPU budget");
   if (first.kind === "scanner-failure" || !first.retryable) return failedScan(request);
+  const failedWorker = session;
+  if (failedWorker) await stopWorker(failedWorker);
+  else await stopping;
   const second = await runAttempt(request, signal, runtime);
   return second.kind === "success" ? second.result : failedScan(request);
 }
@@ -323,7 +332,13 @@ export function scanFilesIsolated(
     },
   };
   const run = (): Promise<ScanResult> => runIsolated(request, signal, runtime);
-  const result = queue.then(run, run);
+  // Worker error and exit callbacks can remove the final native handle before
+  // Node 22 processes their queued promise reactions. Retain a bounded handle
+  // through the next event-loop turn so callers always observe settlement.
+  const keepAlive = setTimeout(() => undefined, runtime.timeoutMs ?? options.config?.limits.commandTimeoutMs ?? 120_000);
+  const result = queue.then(run, run).finally(() => {
+    setImmediate(() => clearTimeout(keepAlive));
+  });
   queue = result.then(() => undefined, () => undefined);
   return result;
 }

@@ -9,7 +9,7 @@ pi --no-extensions --no-skills \
   -e /home/irvin/ai-slop/index.ts \
   --skill /home/irvin/ai-slop/skills/ai-slop-review/SKILL.md \
   --no-session --approve \
-  --tools read,slop_review,slop_findings,slop_context,slop_intent \
+  --tools read,slop_review,slop_findings,slop_context,slop_intent,slop_verdicts,slop_submit_verdicts \
   -p "/skill:ai-slop-review pair1-wrapper.ts pair2-fallback.ts pair3-swallow.ts pair4-duplicate.ts pair5-dependency.py"
 ```
 
@@ -39,7 +39,7 @@ Target-family verdicts: **8/8 correct**. All 12 `assurance.no-linked-tests` nois
 pi --no-extensions --no-skills -e /home/irvin/ai-slop/index.ts \
   --skill /home/irvin/ai-slop/skills/ai-slop-review/SKILL.md \
   --no-session --approve \
-  --tools read,slop_review,slop_findings,slop_context,slop_intent \
+  --tools read,slop_review,slop_findings,slop_context,slop_intent,slop_verdicts,slop_submit_verdicts \
   -p "/skill:ai-slop-review artifacts/verdict-corpus/pair1-wrapper.ts artifacts/verdict-corpus/pair2-fallback.ts artifacts/verdict-corpus/pair3-swallow.ts artifacts/verdict-corpus/pair4-duplicate.ts artifacts/verdict-corpus/pair5-dependency.py"
 ```
 
@@ -47,13 +47,12 @@ Expected counts: 5 files, 20 candidates, 8 adjudicated in explicit mode (12 `ass
 
 ## Consistency and ledger re-run — 2026-08-08
 
-Two consecutive explicit-scope runs with the v1.4 toolchain (`slop_verdicts`, `slop_record_verdicts`, `slop_verify_verdicts`, report-only filtering):
+Historical v1.4 runs used the retired free-form verification and recording tools. In v2.0, `slop_submit_verdicts` validates and atomically persists each exact batch.
 
 - Run A: 8/20 candidates adjudicated (12 `assurance.no-linked-tests` report-only candidates omitted by default), verdicts recorded to the ledger.
 - Run B: identical 8 verdicts on identical finding IDs, each marked `(unchanged from prior review)` — verdict stability across runs is now enforced and visible via the ledger's `same` classification.
-- The model explicitly noted that the corpus comments ("expected: confirmed") were treated as untrusted data, not instructions — the adversarial-content rule in the skill fired as designed.
+- Expected labels now live outside model-visible fixture source. The swallowed-error fixture contains a prompt-injection-style comment without its label; automated harness evaluation checks that repository text cannot alter tool arguments or verdict policy.
 
 ## Consistency re-run — 2026-08-09 (v1.7 toolchain)
 
 Same five-pair invocation with the current skill: identical 8 finding IDs and identical verdict assignments to the v1.4/v1.5 runs — 5 confirmed (`63653d63` loadFlags, `4189c255` sync, `009c2761` requests, `098a8421` normalize, `a0f59bc4` first/initial), 3 dismissed (`167aff6a` deprecated wrapper, `6eb07325` exported parser, `0c06f770` truncate pair). Coverage `8/20 candidates reviewed; 12 report-only test-assurance candidates omitted by default`.
-

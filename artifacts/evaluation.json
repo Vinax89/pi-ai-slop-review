@@ -421,17 +421,17 @@
     }
   },
   "runtime": {
-    "node": "v24.18.0",
+    "node": "v24.19.0",
     "nodeVersions": {
-      "node": "24.18.0",
-      "acorn": "8.16.0",
+      "node": "24.19.0",
+      "acorn": "8.17.0",
       "ada": "3.4.4",
-      "amaro": "1.1.9",
+      "amaro": "1.1.10",
       "ares": "1.34.6",
       "brotli": "1.2.0",
       "cldr": "48.0",
       "icu": "78.3",
-      "llhttp": "9.4.2",
+      "llhttp": "9.4.3",
       "merve": "1.2.2",
       "modules": "137",
       "napi": "10",
@@ -443,31 +443,31 @@
       "openssl": "3.5.7",
       "simdjson": "4.6.4",
       "simdutf": "6.4.0",
-      "sqlite": "3.53.1",
+      "sqlite": "3.53.3",
       "tz": "2026b",
-      "undici": "7.28.0",
+      "undici": "7.29.0",
       "unicode": "17.0",
       "uv": "1.52.1",
       "uvwasi": "0.0.23",
-      "v8": "13.6.233.17-node.50",
-      "zlib": "1.3.1-e00f703",
+      "v8": "13.6.233.17-node.51",
+      "zlib": "1.3.2.1-motley-3246f1b",
       "zstd": "1.5.7"
     },
     "python": {
       "executable": "python3",
-      "version": "Python 3.12.3"
+      "version": "Python 3.14.7"
     },
     "platform": "linux",
     "arch": "x64"
   },
   "hashes": {
-    "code": "8f92bdfb0851c277f8f6744c8d5975af3b11840770e34e05a11ee4ddb0cc50fe",
+    "code": "93eb13066009c3a232abd43e7991d8e4d64a17e7333e84028daf08891af399e2",
     "corpus": "35bbedeb12c563cd8d7933fd13cf26ae0b75f8019ba4a27316782228e0f5e397",
     "rules": "d2f9bcb4bbb9c18df671539c7f1aa2ba3415036bb7e8da71ad825c596d69e578",
     "library": "269957342dd315bd24285d148b4d1b879b0c89bf2b6957d07ffcc3fd6a6796e7",
     "schema": "0e4028c5de643e430e3bb8634b38f0bd5a1eefb87460f3a7ffb97d404939bf01",
-    "package": "87b43934663774f45bf113ab8a5f4c5ad58c7f3fcdedee2525e55099753ad41d",
+    "package": "516ffb985137a6f41453129f306e9e5036721cc578b5497754050fe34e2f4b33",
     "config": "f40bf8dfca68c87616330a3fe8265a85b7aa9637f03c9b8a1785e92e4fe8e9f5",
-    "runtime": "6c68f3a1a23a146c26cb909a41534564123d13a5bc466baf4d727226caf66dec"
+    "runtime": "38bf291c23b6336ab253613d8093b51c5ad5805ba9bcc73fd5a27212a94fdb86"
   }
 }

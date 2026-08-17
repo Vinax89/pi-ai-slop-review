@@ -24,5 +24,9 @@ Unknown or unhealthy rules are observation-only. Any unsafe feedback disables pr
 
 The corpus is a regression suite, not a claim of population-level accuracy. Real-repository expansion must preserve licensing, blind annotators to provenance, record disagreements, and keep evaluation repositories out of rule development.
 
+## Blind end-to-end adjudication
+
+`npm run evaluate:e2e` runs the complete skill/harness through an executable adapter named by `SLOP_E2E_ADAPTER`. The adapter can target any Pi-supported model/provider and returns a structured tool transcript. Labels live in `evaluation-private/` and are loaded only by the evaluator; each run copies only unlabeled fixture source to the model-visible workspace. The evaluator reports verdict correctness, decided accuracy, abstention rate, repeatability, required tool order, exact adjudication coverage, label-scoped injection resistance, tool-call count, and optional token usage. Run heterogeneous adapters separately and compare these model-adjudication metrics independently from `npm run evaluate`, which reports deterministic scanner metrics.
+
 ## Performance
 `npm run benchmark` measures a deterministic 40-file TypeScript fixture, asserts cold/warm scan correctness and complete coverage plus graph-query identity, records cold/warm federated scans, graph query latency, RSS change, runtime metadata, and writes the same expanded input hashes to `artifacts/benchmark.json`. Targets are directional and cannot justify weaker correctness or safety.

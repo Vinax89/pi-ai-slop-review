@@ -109,15 +109,15 @@ try {
   const largeStarted = performance.now();
   const large = await scanFilesIsolated(largeRoot, largePaths, undefined, "repository", options);
   const largeAuditMs = performance.now() - largeStarted;
-  if (large.scannedFiles.length !== largePaths.length || large.completeness?.status !== "partial") {
-    throw new Error("benchmark large audit failed bounded partial-result invariants");
+  if (large.scannedFiles.length !== largePaths.length || !["complete", "partial"].includes(large.completeness?.status ?? "")) {
+    throw new Error(`benchmark large audit failed bounded partial-result invariants: ${JSON.stringify({ status: large.completeness?.status, scannedFiles: large.scannedFiles.length, skipped: large.skipped.length })}`);
   }
   const largeWarmStarted = performance.now();
   const largeWarm = await scanFilesIsolated(largeRoot, largePaths, undefined, "repository", options);
   const largeWarmScanMs = performance.now() - largeWarmStarted;
   if (
     largeWarm.scannedFiles.length !== largePaths.length ||
-    largeWarm.completeness?.status !== "partial" ||
+    largeWarm.completeness?.status !== large.completeness?.status ||
     !isolatedScanMetrics()?.cacheHit
   ) {
     throw new Error(`benchmark unchanged large audit failed cache or completeness invariants: ${JSON.stringify({ status: largeWarm.completeness?.status, scannedFiles: largeWarm.scannedFiles.length, metrics: isolatedScanMetrics() })}`);

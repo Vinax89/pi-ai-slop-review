@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 
-// Pair 2: hidden fallback vs typed/intentional fallback.
-// Member A (expected: confirmed) — silent default, no documented contract.
+// Two fallback boundaries with different contracts.
 export function loadFlags(): string[] {
   try {
     return JSON.parse(readFileSync("flags.json", "utf8")) as string[];
@@ -10,7 +9,6 @@ export function loadFlags(): string[] {
   }
 }
 
-// Member B (expected: dismissed) — fallback is a documented, typed contract.
 export interface Limits {
   max: number;
 }

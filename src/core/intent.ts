@@ -23,8 +23,8 @@ export type IntentAssessmentStatus = "supported" | "contested" | "unknown";
 export type IntentStepResult = "pass" | "fail" | "unknown" | "conflict";
 
 export const INTENT_CRITERIA = [
-  "A suspicious pattern is not AI-slop by itself.",
-  "A likely-AI-slop determination requires complete relevant context and no unresolved counterevidence.",
+  "A suspicious pattern is not a defect by itself.",
+  "A confirmed review finding requires complete relevant context and no unresolved counterevidence.",
   "Public boundaries, registrations, callers, tests, specifications, or coverage are evidence of possible intent, not proof of correctness.",
   "Missing static references are unknown context, not proof that code is unused.",
   "Independent provider agreement increases corroboration but provider count is not proof of intent or correctness.",
