@@ -333,6 +333,28 @@ test("does not flag documented best-effort skips or locals assigned on every bra
   assert.equal(findings.some((finding) => finding.ruleId === "correctness.conditionally-unbound-local"), false);
 });
 
+test("reports inert conditional checks inside tests", async () => {
+  const root = project({
+    "test_ordering.py": [
+      "def test_steps_ordered():",
+      "    previous = -1",
+      "    for number in steps:",
+      "        if number < previous:",
+      "            pass",
+      "        previous = number",
+      "def test_steps_checked():",
+      "    for number in steps:",
+      "        if number < 0:",
+      "            raise AssertionError(number)",
+    ].join("\n"),
+  });
+  const findings = (await scanPythonFiles(root, ["test_ordering.py"])).findings.filter(
+    (finding) => finding.ruleId === "assurance.inert-test-check",
+  );
+  assert.equal(findings.length, 1);
+  assert.match(findings[0]?.message ?? "", /cannot fail/);
+});
+
 test("skips generated and syntactically invalid Python", async () => {
   const root = project({
     "generated.py": "# @generated\nvalue = 1\n",

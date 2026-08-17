@@ -100,6 +100,13 @@ test("repository graph reports runtime import cycles only for complete repositor
   writeFileSync(path.join(root, "src/b.ts"), "import type { A } from './a.js';\nexport const value = 1;\nexport interface B { a?: A }\n");
   const mixed = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
   assert.equal(mixed.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+
+  const fixturePaths = ["benchmark/fixtures/cycle-a.ts", "benchmark/fixtures/cycle-b.ts"];
+  mkdirSync(path.join(root, "benchmark/fixtures"), { recursive: true });
+  writeFileSync(path.join(root, fixturePaths[0]), "import { b } from './cycle-b.js';\nexport const a = b + 1;\n");
+  writeFileSync(path.join(root, fixturePaths[1]), "import { a } from './cycle-a.js';\nexport const b = a + 1;\n");
+  const fixtureCycle = await collectGraphEvidence(root, fixturePaths, config, undefined, state, "repository");
+  assert.equal(fixtureCycle.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
 });
 
 test("partial scans preserve unseen graph facts while complete scans prune them", async () => {

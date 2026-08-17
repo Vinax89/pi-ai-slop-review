@@ -158,6 +158,37 @@ test("distinguishes suppressed errors, hidden fallbacks, and rethrows", () => {
   assert.equal(findings.filter((finding) => finding.ruleId === "data.hidden-catch-fallback").length, 1);
 });
 
+test("detects empty delimited fields coerced to zero while respecting explicit guards", () => {
+  const root = project({
+    "input.js": [
+      ".pragma library",
+      "export function parseCoords(raw) {",
+      "  const parts = String(raw || '').trim().split(',');",
+      "  if (parts.length !== 2) return null;",
+      "  const latitude = Number(parts[0].trim());",
+      "  const longitude = Number(parts[1].trim());",
+      "  return { latitude, longitude };",
+      "}",
+      "export function parseGuarded(raw) {",
+      "  const parts = String(raw || '').trim().split(',');",
+      "  if (parts.length !== 2) return null;",
+      "  if (!parts[0].trim() || !parts[1].trim()) return null;",
+      "  return { latitude: Number(parts[0].trim()), longitude: Number(parts[1].trim()) };",
+      "}",
+      "export function parseNonDominating(raw, enabled) {",
+      "  const parts = String(raw || '').trim().split(',');",
+      "  if (enabled && !parts[0].trim()) return null;",
+      "  return Number(parts[0].trim());",
+      "}",
+    ].join("\n"),
+  });
+  const findings = scanTypeScriptFiles(root, ["input.js"]).findings.filter(
+    (finding) => finding.ruleId === "correctness.empty-numeric-field-coercion",
+  );
+  assert.equal(findings.length, 2);
+  assert.match(findings[0]?.message ?? "", /empty delimited field/);
+});
+
 test("reports explicit placeholder-only bodies without treating ordinary throws or declarations as stubs", () => {
   const root = project({
     "input.ts": [

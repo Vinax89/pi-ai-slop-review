@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-17T10:55:18.161Z",
+  "generatedAt": "2026-08-17T11:28:26.930Z",
   "runtime": {
     "node": "v26.7.0",
     "nodeVersions": {
@@ -49,22 +49,22 @@
     "graphResults": 1
   },
   "measurements": {
-    "coldScanMs": 501.06,
-    "recycledColdScanMs": 483.74,
-    "changedFileScanMs": 346.56,
-    "warmScanP50Ms": 1.74,
-    "warmScanP95Ms": 2.13,
+    "coldScanMs": 493.23,
+    "recycledColdScanMs": 485.36,
+    "changedFileScanMs": 344.44,
+    "warmScanP50Ms": 1.79,
+    "warmScanP95Ms": 2.05,
     "warmCacheHitRate": 1,
-    "warmWorkerCpuP50Ms": 1.76,
-    "coldWorkerHeapUsedMiB": 17.26,
-    "coldWorkerRssMiB": 236,
-    "largeAuditMs": 2253.86,
-    "largeWarmScanMs": 38.43,
-    "graphQueryMs": 0.55,
-    "rssHighWaterDeltaMiB": 12.39,
-    "heapUsedDeltaMiB": 3.48,
+    "warmWorkerCpuP50Ms": 1.75,
+    "coldWorkerHeapUsedMiB": 17.29,
+    "coldWorkerRssMiB": 238.63,
+    "largeAuditMs": 2249.4,
+    "largeWarmScanMs": 38.53,
+    "graphQueryMs": 0.56,
+    "rssHighWaterDeltaMiB": 12.32,
+    "heapUsedDeltaMiB": 3.21,
     "cancellationContained": true,
-    "activeProviderCancellationMs": 34.78,
+    "activeProviderCancellationMs": 34.48,
     "workerOomContained": true
   },
   "targets": {
@@ -84,12 +84,12 @@
     "note": "Targets are directional and never override deterministic findings, completeness, or containment."
   },
   "hashes": {
-    "code": "b37f874a7e3a0cac2da73e6881e72b75096e0358854d0e30a37cc6a3ba772739",
+    "code": "0d78a1799fe7a2fd23cb3715f375cb518d28231ab2cf5d2f2c332e68cb93d274",
     "corpus": "d5fe7caf51ea1b8ad099dd8fa3bcc9cfcc7a7e32482b3b42602861276e5ba0e1",
-    "rules": "ad679f977a6b0602f8b63619b02f4bebb27caf4b40bc847f4441537a96af4ec9",
-    "library": "34111f383504efcf24dbc0bc24c3178221ab625f331ba929af0e11323d0354d2",
+    "rules": "786e101489151248e19ff68a61ead2ad61cd6a4dde068300ce0976c3a4e282ed",
+    "library": "5f3c7760877137a77e6bfc972439a36f49e48339faa14fb72d642520e81c9b64",
     "schema": "673c38bd97e50f2008db203fa55724ef169a4f72a970eb25b88b9c6b4a430d75",
-    "package": "6bc130bd7e5bc537285a04c0399c6068477d8fb27fdef40993935650016d9ae0",
+    "package": "e26bc88622452368fbb1598c28c68dfc5aa5941a6531474b19d20474c88f0f4a",
     "config": "f40bf8dfca68c87616330a3fe8265a85b7aa9637f03c9b8a1785e92e4fe8e9f5",
     "runtime": "b661434ca6126fb073a09bbfe5274e391eff6e4a505a820b4f20b5635f144b90"
   }

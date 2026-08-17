@@ -100,6 +100,12 @@ function findProjectConfig(root: string, filePath: string): string | undefined {
   return undefined;
 }
 
+function preprocessTypeScriptSource(filePath: string, text: string): string {
+  if (path.extname(filePath).toLowerCase() !== ".js") return text;
+  return text.replace(/^([\t ]*)\.pragma[\t ]+library[\t ]*(?:\r?\n|$)/, (directive) =>
+    directive.replace(/[^\r\n]/g, " "));
+}
+
 function createProject(files: string[], configPath?: string, previousProjects: TypeScriptProjectContext[] = []): Project {
   let options: ts.CompilerOptions;
   let rootNames: string[];
@@ -135,7 +141,13 @@ function createProject(files: string[], configPath?: string, previousProjects: T
     project.rootNames.every((file, index) => file === rootNames[index]) &&
     JSON.stringify(project.options) === JSON.stringify(options)
   );
-  const program = ts.createProgram({ rootNames, options, oldProgram: previous?.program });
+  const host = ts.createCompilerHost(options);
+  const readFile = host.readFile.bind(host);
+  host.readFile = (fileName) => {
+    const text = readFile(fileName);
+    return text === undefined ? undefined : preprocessTypeScriptSource(fileName, text);
+  };
+  const program = ts.createProgram({ rootNames, options, oldProgram: previous?.program, host });
   return {
     files,
     rootNames,
@@ -501,6 +513,140 @@ function scanCatchClauses(sourceFile: ts.SourceFile, sourceHash: string, root: s
   return findings;
 }
 
+type SplitField = { identifier: ts.Identifier; index: string };
+
+function splitElementTrim(expression: ts.Expression): SplitField | undefined {
+  if (
+    !ts.isCallExpression(expression) ||
+    expression.arguments.length !== 0 ||
+    !ts.isPropertyAccessExpression(expression.expression) ||
+    expression.expression.name.text !== "trim" ||
+    !ts.isElementAccessExpression(expression.expression.expression) ||
+    !ts.isIdentifier(expression.expression.expression.expression) ||
+    !expression.expression.expression.argumentExpression
+  ) return undefined;
+  return {
+    identifier: expression.expression.expression.expression,
+    index: expression.expression.expression.argumentExpression.getText(),
+  };
+}
+
+function terminates(statement: ts.Statement): boolean {
+  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+  return ts.isBlock(statement) && statement.statements.length > 0 && terminates(statement.statements[statement.statements.length - 1]!);
+}
+
+function sameBinding(checker: ts.TypeChecker, left: ts.Identifier, right: ts.Identifier): boolean {
+  const leftSymbol = checker.getSymbolAtLocation(left);
+  const rightSymbol = checker.getSymbolAtLocation(right);
+  return leftSymbol && rightSymbol ? leftSymbol === rightSymbol : left.text === right.text;
+}
+
+function rejectsEmptyField(checker: ts.TypeChecker, expression: ts.Expression, target: SplitField): boolean {
+  if (ts.isParenthesizedExpression(expression)) return rejectsEmptyField(checker, expression.expression, target);
+  if (ts.isPrefixUnaryExpression(expression) && expression.operator === ts.SyntaxKind.ExclamationToken) {
+    const field = splitElementTrim(expression.operand);
+    return Boolean(field && field.index === target.index && sameBinding(checker, field.identifier, target.identifier));
+  }
+  return ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.BarBarToken && (
+    rejectsEmptyField(checker, expression.left, target) || rejectsEmptyField(checker, expression.right, target)
+  );
+}
+
+function hasEmptyFieldGuard(checker: ts.TypeChecker, body: ts.Block, target: SplitField, call: ts.CallExpression): boolean {
+  let cursor: ts.Node = call;
+  while (cursor !== body) {
+    let block: ts.Node | undefined = cursor.parent;
+    while (block && block !== body && !ts.isBlock(block)) block = block.parent;
+    if (!block || !ts.isBlock(block)) return false;
+    let directChild = cursor;
+    while (directChild.parent && directChild.parent !== block) directChild = directChild.parent;
+    for (const statement of block.statements) {
+      if (statement.getStart() >= directChild.getStart()) break;
+      if (
+        ts.isIfStatement(statement) &&
+        terminates(statement.thenStatement) &&
+        rejectsEmptyField(checker, statement.expression, target)
+      ) return true;
+    }
+    if (block === body) break;
+    cursor = block;
+  }
+  return false;
+}
+
+function executableFunctionBlock(node: ts.Node): ts.Block | undefined {
+  if (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  ) return node.body && ts.isBlock(node.body) ? node.body : undefined;
+  return undefined;
+}
+
+function scanEmptyNumericFieldCoercions(project: Project, sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
+  const findings: FindingDraft[] = [];
+  const visit = (node: ts.Node): void => {
+    const body = executableFunctionBlock(node);
+    if (body) {
+      const splitDeclarations: Array<{ identifier: ts.Identifier; position: number }> = [];
+      const numberCalls: Array<{ call: ts.CallExpression; field: SplitField }> = [];
+      const inspect = (child: ts.Node): void => {
+        if (child !== body && ts.isFunctionLike(child)) return;
+        if (
+          ts.isVariableDeclaration(child) &&
+          ts.isIdentifier(child.name) &&
+          child.initializer &&
+          ts.isCallExpression(child.initializer) &&
+          ts.isPropertyAccessExpression(child.initializer.expression) &&
+          child.initializer.expression.name.text === "split" &&
+          child.initializer.arguments.length === 1 &&
+          ts.isStringLiteralLike(child.initializer.arguments[0]!) &&
+          child.initializer.arguments[0]!.text === ","
+        ) splitDeclarations.push({ identifier: child.name, position: child.getStart(sourceFile) });
+        if (
+          ts.isCallExpression(child) &&
+          ts.isIdentifier(child.expression) &&
+          child.expression.text === "Number" &&
+          child.arguments.length === 1
+        ) {
+          const symbol = project.checker.getSymbolAtLocation(child.expression);
+          const globalNumber = !symbol?.declarations?.some((declaration) => !declaration.getSourceFile().isDeclarationFile);
+          const field = splitElementTrim(child.arguments[0]!);
+          if (globalNumber && field) numberCalls.push({ call: child, field });
+        }
+        ts.forEachChild(child, inspect);
+      };
+      inspect(body);
+      const candidate = numberCalls.find(({ call, field }) =>
+        splitDeclarations.some(({ identifier, position }) =>
+          position < call.getStart(sourceFile) && sameBinding(project.checker, identifier, field.identifier)
+        ) && !hasEmptyFieldGuard(project.checker, body, field, call));
+      if (candidate) {
+        findings.push(finding(sourceFile, sourceHash, root, candidate.call, {
+          anchor: structuralAnchor(candidate.call, "empty-number-coercion"),
+          ruleId: "correctness.empty-numeric-field-coercion",
+          classification: "defect",
+          confidence: "C2",
+          risk: "R2",
+          maximumAction: "observe",
+          message: "Number conversion turns an empty delimited field into zero without an explicit empty-field guard",
+          evidence: ["AST links a comma-split field through trim() directly into the global Number constructor"],
+          counterEvidence: [],
+          unknown: ["whether the parser contract intentionally treats an empty field as numeric zero"],
+        }));
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return findings;
+}
+
 function scanExplicitPlaceholders(project: Project, sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
   const findings: FindingDraft[] = [];
   const safeLabel = (value: string, maxLength = 120): string => {
@@ -705,8 +851,8 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
       skipped.push({ filePath: display, reason: "TypeScript program did not include the file" });
       continue;
     }
-    const text = sourceFile.text;
-    if (isGenerated(display, text)) {
+    const originalText = readFileSync(file, "utf8");
+    if (isGenerated(display, originalText)) {
       skipped.push({ filePath: display, reason: "generated or vendor-like file" });
       continue;
     }
@@ -715,7 +861,7 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
       skipped.push({ filePath: display, reason: "file has TypeScript syntax diagnostics" });
       continue;
     }
-    const sourceHash = contentHashOnce(file, text);
+    const sourceHash = contentHashOnce(file, originalText);
     hashes.set(path.resolve(file), sourceHash);
     validFiles.add(path.resolve(file));
     scannedFiles.push(display);
@@ -726,6 +872,8 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
     if (findings.length < maxFindings) {
       const remaining = maxFindings - findings.length;
       findings.push(...scanCatchClauses(sourceFile, sourceHash, root).slice(0, remaining));
+      const numericRemaining = maxFindings - findings.length;
+      findings.push(...scanEmptyNumericFieldCoercions(project, sourceFile, sourceHash, root).slice(0, numericRemaining));
       const placeholderRemaining = maxFindings - findings.length;
       findings.push(...scanExplicitPlaceholders(project, sourceFile, sourceHash, root).slice(0, placeholderRemaining));
     }

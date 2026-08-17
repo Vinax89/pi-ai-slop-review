@@ -12,7 +12,7 @@ import { GraphStore } from "./store.ts";
 import type { GraphNode, PublicSurfaceEntry } from "./types.ts";
 
 const GRAPH_PROVIDER_VERSION = "2";
-const CLONE_EXCLUDED_PATH = /(?:^|\/)(?:tests?|fixtures?|alembic\/versions|migrations)(?:\/|$)/;
+const NON_PRODUCTION_STRUCTURAL_PATH = /(?:^|\/)(?:tests?|fixtures?|alembic\/versions|migrations)(?:\/|$)/;
 
 function matches(filePath: string, patterns: string[]): boolean {
   return patterns.some((pattern) => pathMatches(filePath, pattern));
@@ -161,6 +161,7 @@ export async function collectGraphEvidence(
       const scopedEdges = store.importEdges().filter((edge) => reviewedFiles.has(edge.filePath));
       for (const cycle of importCycles(allNodes, scopedEdges, config.limits.maxFindings - findings.length, true)) {
         if (findings.length >= config.limits.maxFindings) break;
+        if (cycle.files.every((filePath) => NON_PRODUCTION_STRUCTURAL_PATH.test(filePath))) continue;
         const representative = allNodes.find((node) => node.kind === "file" && node.filePath === cycle.files[0]);
         if (!representative) continue;
         const finding = findingForNode(rootDir, representative, {
@@ -184,11 +185,11 @@ export async function collectGraphEvidence(
       for (const node of page) {
         if (findings.length >= config.limits.maxFindings) break reviewed;
         if (node.bodyHash && ["function", "class"].includes(node.kind) &&
-          !CLONE_EXCLUDED_PATH.test(node.filePath)) {
+          !NON_PRODUCTION_STRUCTURAL_PATH.test(node.filePath)) {
           const cloneGroup = `${node.kind}:${node.bodyHash}`;
           if (!reportedCloneGroups.has(cloneGroup)) {
             const clones = store.clones(node.bodyHash, node.kind, config.limits.maxFindings + 1).filter(
-              (candidate) => !CLONE_EXCLUDED_PATH.test(candidate.filePath),
+              (candidate) => !NON_PRODUCTION_STRUCTURAL_PATH.test(candidate.filePath),
             );
             const signature = node.signature?.slice(node.signature.indexOf("("));
             const compatibleSignatures = node.kind !== "function" || clones.every(

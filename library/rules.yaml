@@ -96,6 +96,36 @@ rules:
     verification_steps:
       - Run a focused malformed-input test and the project Python type checker when configured.
 
+  - id: correctness.empty-numeric-field-coercion
+    scope: artifact
+    classification: defect
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A delimited JavaScript field is trimmed and passed to Number without rejecting empty text, causing an empty field to become zero.
+    vetoes: [explicit-empty-field-guard, intentional-empty-as-zero-contract, non-global-number-constructor]
+    maximum_action: observe
+    remediation_steps:
+      - Confirm empty fields are invalid under the parser contract and reach the numeric conversion.
+      - Reject empty trimmed fields before conversion without changing valid zero handling.
+    verification_steps:
+      - Add focused cases for empty fields, whitespace-only fields, valid zero, malformed numbers, and bounds.
+
+  - id: assurance.inert-test-check
+    scope: artifact
+    classification: assurance_gap
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A conditional inside a test contains only pass, so the named condition cannot make the test fail.
+    vetoes: [intentional-instrumentation, generated-test, non-assertive-example]
+    maximum_action: observe
+    remediation_steps:
+      - Confirm the test name or contract intends to enforce the condition.
+      - Replace the no-op with an assertion or remove the misleading check when it is intentionally informational.
+    verification_steps:
+      - Mutate or fixture the violating condition and prove the test fails for the intended reason.
+
   - id: data.hidden-catch-fallback
     scope: artifact
     classification: context_conflict

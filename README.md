@@ -21,7 +21,7 @@ pi -e npm:pi-ai-slop-review
 A version-tagged Git installation is also supported:
 
 ```bash
-pi install git:github.com/Vinax89/pi-ai-slop-review@v2.0.1
+pi install git:github.com/Vinax89/pi-ai-slop-review@v2.0.2
 ```
 
 Pi packages execute code with the user's privileges. Review the source and [`docs/security.md`](docs/security.md) before installation.
@@ -73,6 +73,7 @@ The scanner federates a TypeScript `Program`/`TypeChecker`, an isolated Python s
 - catch clauses and quiet post-handler paths returning safe-looking fallbacks
 - complete-scope runtime import-cycle candidates built only from runtime edges
 - Python locals read after assignment under only an `isinstance` guard
+- pass-only test conditions that cannot fail, and unguarded empty delimited fields coerced to numeric zero
 - explicit placeholder-only function bodies, with unsupported-operation and subclass contracts left for adjudication
 
 Python wrapper findings remain observation-only because repository-wide dynamic references are not proven. Python imports guarded by `TYPE_CHECKING`, `ImportError`, or platform conditions are excluded; PEP 735 dependency groups are treated as declarations. Bare TypeScript imports declared by the nearest workspace package are not reported merely because dependencies are absent from the scanner environment. External analyzer fixes are retained only as evidence.

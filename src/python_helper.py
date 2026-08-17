@@ -464,6 +464,37 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
                     )
                 )
 
+        if (
+            test_file
+            and isinstance(node, ast.If)
+            and len(node.body) == 1
+            and isinstance(node.body[0], ast.Pass)
+            and not node.orelse
+        ):
+            function = next(
+                (parent for parent in ancestors(node, parents) if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))),
+                None,
+            )
+            if function is not None and function.name.startswith("test"):
+                findings.append(
+                    finding(
+                        root=root,
+                        file_path=file_path,
+                        source=source,
+                        lines=lines,
+                        node=node,
+                        anchor=structural_anchor(node, parents, "inert-test-check"),
+                        rule_id="assurance.inert-test-check",
+                        classification="assurance_gap",
+                        confidence="C2",
+                        risk="R2",
+                        maximum_action="observe",
+                        message="Test condition only executes pass and therefore cannot fail",
+                        evidence=["Python AST confirms the conditional body contains only pass and has no alternate branch"],
+                        unknown=["whether the test is intentionally informational or awaiting an assertion"],
+                    )
+                )
+
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not isinstance(parents.get(node), ast.ClassDef):
             call = identity_wrapper(node)
             if call is not None and node.name.startswith("_") and not test_file:

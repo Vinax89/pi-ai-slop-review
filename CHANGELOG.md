@@ -2,10 +2,13 @@
 
 ## Unreleased
 
+## 2.0.2
+
 - Resolve bare TypeScript imports against the nearest workspace package manifest and Python imports against PEP 735 dependency groups before reporting missing dependencies.
 - Build runtime-cycle components from runtime edges only, so type-only return edges cannot manufacture a runtime cycle.
-- Exclude fixture trees from exact-body duplicate candidates while retaining production duplicate observations.
+- Exclude fixture and test trees from exact-body duplicate and runtime-cycle candidates while retaining production observations.
 - Detect quiet post-handler fallbacks, exception-skipped validation inputs, and narrowly proven Python locals that escape an `isinstance` guard without assignment.
+- Detect inert pass-only conditions inside tests and comma-delimited numeric fields that coerce empty text to zero without a guard.
 - Add synthetic positive and hard-negative regressions derived from independently reviewed real-repository calibration, without shipping repository source or labels.
 - Add an external-manifest real-repository corpus pipeline with frozen repository-level splits, strict checkout provenance, holdout non-observation, bounded source-only fixtures, balanced candidate/control sampling, and independently preserved private review sheets.
 - Keep private repository source and labels outside the npm package, and ship a strict corpus-manifest schema plus packaging/release privacy gates.
