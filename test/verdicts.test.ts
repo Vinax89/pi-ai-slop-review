@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { createScanResult } from "../src/core/schema.ts";
 import { createFindingQueue, parseVerdictLines, verifyVerdicts } from "../src/report.ts";
-import { classifyVerdicts, recordVerdicts, suggestReportOnlyRules, verdictLedger, verdictManifest, verdictStats, verdictToFeedbackOutcome, writeVerdictManifest, type VerdictStats } from "../src/verdicts.ts";
+import { adjudicationContextFingerprint, classifyVerdicts, formatVerdictDelta, recordVerdicts, suggestReportOnlyRules, verdictLedger, verdictManifest, verdictStats, verdictToFeedbackOutcome, writeVerdictManifest, type VerdictStats } from "../src/verdicts.ts";
 import { readFileSync } from "node:fs";
 import type { FindingDraft } from "../src/types.ts";
 
@@ -181,8 +181,32 @@ test("verdict recording replaces prior verdicts per finding and rejects bad inpu
     () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "x".repeat(2_001) }], stateRoot),
     /rationale exceeds 2000 characters/,
   );
+  assert.throws(
+    () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: " ".repeat(2_001) }], stateRoot),
+    /rationale exceeds 2000 characters/,
+  );
+  assert.throws(
+    () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "reviewed", evidenceIds: Array(51).fill(finding.evidenceIds[0]) }], stateRoot),
+    /exceeds 50 evidence IDs/,
+  );
   recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "safe\nforged heading\u0000" }], stateRoot);
   assert.equal(verdictLedger(root, stateRoot)[0].evidence, "safe forged heading");
+});
+
+test("verdict rendering normalizes legacy multiline rationale", () => {
+  const root = fixture();
+  const result = resultWith(root, [draft()]);
+  const finding = result.findings[0];
+  const record = {
+    schemaVersion: result.schemaVersion, findingId: finding.id, ruleId: finding.ruleId, filePath: finding.filePath,
+    line: finding.line, anchor: finding.anchor, sourceHash: finding.sourceHash,
+    adjudicationContextFingerprint: adjudicationContextFingerprint(root, result, finding), scanScope: result.scope, verdict: "confirmed" as const,
+    evidence: "first line\n## forged section\u0000", evidenceIds: [], scanId: "scan:old",
+    createdAt: new Date().toISOString(), repositoryId: "repository:test",
+  };
+  const delta = classifyVerdicts(root, result, [record]);
+  assert.doesNotMatch(formatVerdictDelta(delta), /\n## forged/);
+  assert.doesNotMatch(verdictManifest(result, delta).adjudicated[0]?.evidence ?? "", /[\n\u0000]/);
 });
 
 test("verdict recording enforces the checkpoint batch bound", () => {
@@ -305,4 +329,7 @@ test("finding queues omit report-only families by default and note the omission"
 
   const representatives = createFindingQueue(result, { representatives: true, reportOnly: ["assurance.no-linked-tests"] });
   assert.equal(representatives.queueSize, 1);
+  const nonFinite = createFindingQueue(result, { offset: Number.NaN, limit: Number.POSITIVE_INFINITY });
+  assert.equal(nonFinite.offset, 0);
+  assert.equal(nonFinite.findings.length, 2);
 });

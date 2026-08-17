@@ -324,6 +324,31 @@ def safe_fallback(node: ast.AST | None) -> bool:
     return False
 
 
+def function_shadows_name(node: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> bool:
+    arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+    if node.args.vararg is not None:
+        arguments.append(node.args.vararg)
+    if node.args.kwarg is not None:
+        arguments.append(node.args.kwarg)
+    if any(argument.arg == name for argument in arguments):
+        return True
+    return any(isinstance(child, ast.Name) and child.id == name and isinstance(child.ctx, ast.Store) for child in ast.walk(node))
+
+
+def module_binds_name(tree: ast.AST, name: str) -> bool:
+    body = tree.body if isinstance(tree, ast.Module) else []
+    for statement in body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and statement.name == name:
+            return True
+        if isinstance(statement, (ast.Import, ast.ImportFrom)) and any((alias.asname or alias.name.split(".")[0]) == name for alias in statement.names):
+            return True
+        if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            if any(isinstance(child, ast.Name) and child.id == name for target in targets for child in ast.walk(target)):
+                return True
+    return False
+
+
 def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     lines = source.splitlines(keepends=True)
@@ -332,6 +357,7 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
     dependencies = declared_dependencies(root, file_path)
     stdlib_modules = getattr(sys, "stdlib_module_names", set(sys.builtin_module_names))
     test_file = "tests" in file_path.parts or file_path.name.startswith("test_")
+    not_implemented_shadowed = module_binds_name(tree, "NotImplementedError")
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -386,7 +412,7 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
             statement = node.body[0]
             raised = statement.exc if isinstance(statement, ast.Raise) else None
             constructor = raised.func if isinstance(raised, ast.Call) else raised
-            if isinstance(constructor, ast.Name) and constructor.id == "NotImplementedError":
+            if isinstance(constructor, ast.Name) and constructor.id == "NotImplementedError" and not not_implemented_shadowed and not function_shadows_name(node, "NotImplementedError"):
                 findings.append(
                     finding(
                         root=root,

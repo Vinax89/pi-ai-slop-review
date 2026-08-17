@@ -126,6 +126,8 @@ test("reports explicit Python placeholders without treating ordinary raises or p
       "    raise ValueError('invalid input')",
       "def empty_hook():",
       "    pass",
+      "def shadowed(NotImplementedError):",
+      "    raise NotImplementedError('ordinary project exception')",
     ].join("\n"),
   });
   const placeholders = (await scanPythonFiles(root, ["input.py"])).findings.filter(
@@ -135,6 +137,12 @@ test("reports explicit Python placeholders without treating ordinary raises or p
   assert.match(placeholders[0].message, /pending/);
   assert.match(placeholders[1].message, /later/);
   assert.ok(placeholders.every((finding) => finding.maximumAction === "observe"));
+  const shadowedRoot = project({
+    "input.py": "class NotImplementedError(Exception):\n    pass\ndef project_error():\n    raise NotImplementedError('ordinary project exception')\n",
+  });
+  assert.equal((await scanPythonFiles(shadowedRoot, ["input.py"])).findings.some(
+    (finding) => finding.ruleId === "structure.explicit-placeholder",
+  ), false);
 });
 
 test("distinguishes suppressed exceptions, hidden fallbacks, intentional boundaries, and typed errors", async () => {

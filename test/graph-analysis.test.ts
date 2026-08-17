@@ -61,6 +61,7 @@ test("import cycle analysis applies a deterministic result budget", () => {
   const edges = [imports(z, y), imports(y, z), imports(b, a), imports(a, b)];
   assert.deepEqual(importCycles([z, b, y, a], edges, 1).map((cycle) => cycle.files), [["src/a.ts", "src/b.ts"]]);
   assert.deepEqual(importCycles([z, b, y, a], edges, 0), []);
+  assert.deepEqual(importCycles([z, b, y, a], edges, Number.NaN), []);
   const typeOnly = edges.slice(2).map((edge) => ({ ...edge, metadata: { typeOnly: true } }));
   assert.deepEqual(importCycles([z, b, y, a], [...typeOnly, ...edges.slice(0, 2)], 1, true).map((cycle) => cycle.files), [["src/y.ts", "src/z.ts"]]);
 });

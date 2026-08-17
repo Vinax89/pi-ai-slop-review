@@ -36,6 +36,11 @@ function normalizedRationale(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function renderedRationale(value: string): string {
+  const normalized = normalizedRationale(value);
+  return normalized.length <= MAX_RATIONALE_LENGTH ? normalized : `${normalized.slice(0, MAX_RATIONALE_LENGTH - 1)}…`;
+}
+
 /** Hash every deterministic input available to adjudication. The scan content
  * hash deliberately invalidates conservatively when callers, tests, exports,
  * specifications, config, or other scanned repository context changes. */
@@ -82,6 +87,7 @@ export function adjudicationContextFingerprint(
  * policy decisions.
  */
 export function recordVerdicts(rootDir: string, scan: ScanResult, entries: VerdictEntry[], stateRoot?: string): number {
+  if (!Array.isArray(entries)) throw new Error("verdict entries must be an array");
   if (entries.length < 1 || entries.length > MAX_VERDICT_BATCH) throw new Error(`verdict batch must contain 1 to ${MAX_VERDICT_BATCH} entries`);
   const submittedIds = entries.map((entry) => entry.findingId);
   if (new Set(submittedIds).size !== submittedIds.length) throw new Error("verdict batch contains duplicate finding IDs");
@@ -91,18 +97,29 @@ export function recordVerdicts(rootDir: string, scan: ScanResult, entries: Verdi
   const records: VerdictRecord[] = [];
   const contextCache = new Map<string, ReturnType<typeof queryContext>>();
   for (const entry of entries) {
+    if (!entry || typeof entry !== "object" || typeof entry.findingId !== "string" || !entry.findingId || entry.findingId.length > 200) {
+      throw new Error("verdict findingId must be a non-empty string of at most 200 characters");
+    }
     if (!VERDICTS.has(entry.verdict)) throw new Error(`verdict must be confirmed, dismissed, or needs-context`);
     const finding = byId.get(entry.findingId);
     if (!finding) throw new Error(`verdict references finding '${entry.findingId}' which is not in the latest review`);
+    if (entry.evidenceIds !== undefined && (!Array.isArray(entry.evidenceIds) || entry.evidenceIds.length > MAX_EVIDENCE_IDS)) {
+      throw new Error(`verdict for '${entry.findingId}' exceeds ${MAX_EVIDENCE_IDS} evidence IDs`);
+    }
     const evidenceIds = [...new Set(entry.evidenceIds ?? [])];
-    if (evidenceIds.length > MAX_EVIDENCE_IDS) throw new Error(`verdict for '${entry.findingId}' exceeds ${MAX_EVIDENCE_IDS} evidence IDs`);
+    if (evidenceIds.some((evidenceId) => typeof evidenceId !== "string" || evidenceId.length > 200)) {
+      throw new Error(`verdict for '${entry.findingId}' contains an invalid evidence ID`);
+    }
     const knownEvidenceIds = new Set([...finding.evidenceIds, ...finding.counterEvidenceIds]);
     for (const evidenceId of evidenceIds) {
       if (!knownEvidenceIds.has(evidenceId)) throw new Error(`verdict for '${entry.findingId}' references unknown evidence '${evidenceId}'`);
     }
-    const evidence = normalizedRationale(entry.rationale ?? entry.evidence ?? "");
+    const rawEvidence = entry.rationale ?? entry.evidence ?? "";
+    if (typeof rawEvidence !== "string" || rawEvidence.length > MAX_RATIONALE_LENGTH) {
+      throw new Error(`verdict for '${entry.findingId}' rationale exceeds ${MAX_RATIONALE_LENGTH} characters`);
+    }
+    const evidence = normalizedRationale(rawEvidence);
     if (!evidence) throw new Error(`verdict for '${entry.findingId}' requires evidence`);
-    if (evidence.length > MAX_RATIONALE_LENGTH) throw new Error(`verdict for '${entry.findingId}' rationale exceeds ${MAX_RATIONALE_LENGTH} characters`);
     records.push({
       schemaVersion: SCHEMA_VERSION,
       findingId: finding.id,
@@ -184,7 +201,7 @@ export function formatVerdictDelta(delta: VerdictDelta, prefix?: string): string
     } else {
       const label = classification.status;
       counts[label] += 1;
-      lines.push(`- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — ${label}: ${classification.record.verdict} (${classification.record.createdAt.slice(0, 10)})${classification.status === "context-changed" ? " — source or adjudication context changed" : ""}\n  ${classification.record.evidence}`);
+      lines.push(`- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — ${label}: ${classification.record.verdict} (${classification.record.createdAt.slice(0, 10)})${classification.status === "context-changed" ? " — source or adjudication context changed" : ""}\n  ${renderedRationale(classification.record.evidence)}`);
     }
   }
   lines.push(`Ledger: ${counts.new} new, ${counts.reusable} reusable, ${counts["context-changed"]} context-changed${resolved.length ? `, ${resolved.length} resolved` : ""}${delta.notObserved.length ? `, ${delta.notObserved.length} not-observed/out-of-scope` : ""}`);
@@ -257,7 +274,7 @@ export function verdictManifest(scan: ScanResult, delta: VerdictDelta): VerdictM
       filePath: finding.filePath,
       line: finding.line,
       verdict: record.verdict,
-      evidence: record.evidence,
+      evidence: renderedRationale(record.evidence),
       status: classification.status,
       reviewedAt: record.createdAt,
     } satisfies VerdictManifestEntry];

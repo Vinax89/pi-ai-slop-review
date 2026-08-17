@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-17T08:40:56.501Z",
+  "generatedAt": "2026-08-17T08:49:53.496Z",
   "runtime": {
     "node": "v24.19.0",
     "nodeVersions": {
@@ -47,22 +47,22 @@
     "graphResults": 1
   },
   "measurements": {
-    "coldScanMs": 592.72,
-    "recycledColdScanMs": 498.7,
-    "changedFileScanMs": 467.08,
-    "warmScanP50Ms": 1.81,
-    "warmScanP95Ms": 2.2,
+    "coldScanMs": 651.68,
+    "recycledColdScanMs": 501.81,
+    "changedFileScanMs": 356.9,
+    "warmScanP50Ms": 1.71,
+    "warmScanP95Ms": 2.13,
     "warmCacheHitRate": 1,
-    "warmWorkerCpuP50Ms": 1.9,
-    "coldWorkerHeapUsedMiB": 20.16,
-    "coldWorkerRssMiB": 216.01,
-    "largeAuditMs": 2277.78,
-    "largeWarmScanMs": 41.52,
-    "graphQueryMs": 0.78,
-    "rssHighWaterDeltaMiB": 16.48,
-    "heapUsedDeltaMiB": 4.9,
+    "warmWorkerCpuP50Ms": 1.85,
+    "coldWorkerHeapUsedMiB": 20.18,
+    "coldWorkerRssMiB": 216.53,
+    "largeAuditMs": 2468.27,
+    "largeWarmScanMs": 41.78,
+    "graphQueryMs": 0.8,
+    "rssHighWaterDeltaMiB": 15.82,
+    "heapUsedDeltaMiB": 4.93,
     "cancellationContained": true,
-    "activeProviderCancellationMs": 37,
+    "activeProviderCancellationMs": 36.6,
     "workerOomContained": true
   },
   "targets": {
@@ -82,7 +82,7 @@
     "note": "Targets are directional and never override deterministic findings, completeness, or containment."
   },
   "hashes": {
-    "code": "1d6ce8839f2ee0180244d3f2e02414c5e5b21ab58f394fa5b024602514134ff3",
+    "code": "77bcde12dda3f68d0f63185c59a2cb1721f9c2f2eb879f0c9af70824d78031ad",
     "corpus": "85f0da3a67e389b44b3ee02ba8aa74ecfa6001e030cdae3ec132c7f3e14b8a7b",
     "rules": "15a6089fe836de22bdc842378279f2413ce6b940ebed3bdb814fd81668e4f3e3",
     "library": "a7cb3f688e47ecf3aa7d80ea6c8be77e48dd81f9ba6df989c1806bd98212170f",

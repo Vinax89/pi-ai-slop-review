@@ -143,8 +143,10 @@ export function createFindingQueue(
         return true;
       })
     : eligible;
-  const offset = Math.max(0, Math.trunc(options.offset ?? 0));
-  const limit = Math.min(20, Math.max(1, Math.trunc(options.limit ?? 20)));
+  const requestedOffset = options.offset ?? 0;
+  const requestedLimit = options.limit ?? 20;
+  const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.trunc(requestedOffset)) : 0;
+  const limit = Number.isFinite(requestedLimit) ? Math.min(20, Math.max(1, Math.trunc(requestedLimit))) : 20;
   const findings = queue.slice(offset, offset + limit);
   const completeness = result.completeness ?? assessScanCompleteness(result);
   const reportOnlyOmitted = ranked.length - eligible.length;

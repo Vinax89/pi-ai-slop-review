@@ -22,7 +22,7 @@ export function formatImportCycle(files: string[], maxFiles = 8): string {
  * canonicalized so output is stable across SQLite and traversal ordering.
  */
 export function importCycles(nodes: GraphNode[], edges: GraphEdge[], maxCycles = Number.MAX_SAFE_INTEGER, runtimeOnly = false): ImportCycle[] {
-  const limit = Math.max(0, Math.floor(maxCycles));
+  const limit = Number.isFinite(maxCycles) ? Math.max(0, Math.floor(maxCycles)) : 0;
   if (limit === 0) return [];
   const filesById = new Map(nodes.filter((node) => node.kind === "file").map((node) => [node.id, node.filePath]));
   const adjacency = new Map<string, Array<{ to: string; typeOnly: boolean }>>();

@@ -49,6 +49,7 @@ test("npm pack contains runtime, schema, documentation, and metadata artifacts",
     assert.ok(files.includes(required), `packed package is missing ${required}`);
   }
   assert.equal(files.some((file) => file.startsWith("test/")), false);
+  assert.equal(files.some((file) => file.startsWith("evaluation-private/") || file.startsWith("artifacts/verdict-corpus/")), false);
   const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
     engines: { node: string };
     pi: { extensions: string[]; skills: string[] };

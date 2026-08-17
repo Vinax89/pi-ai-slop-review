@@ -17,6 +17,11 @@
 - Deduplicate reverse cycle connectivity, budget cycle results deterministically, and retain exact count-only edge provenance.
 - Detect explicit Python `NotImplementedError` placeholders and standard JavaScript error-subclass placeholder markers conservatively.
 - Verify actual core-tool registrations and per-tool prompt guidance, and include the benchmark in `release:check`.
+- Bound raw verdict inputs before normalization or deduplication and sanitize legacy rationale in reports and manifests.
+- Reject symlinks and special files in blind fixtures, bound adapter dimensions and label files, and require exact external label separation.
+- Prevent unsubmitted adjudication batches from being overwritten and return canonical batch/representative/report-only coverage metadata.
+- Avoid placeholder false positives from shadowed JavaScript error constructors and Python `NotImplementedError` bindings.
+- Let published-package users run blind evaluation with external fixture and label paths while keeping private evaluation data out of npm.
 
 ## 2.0.1
 

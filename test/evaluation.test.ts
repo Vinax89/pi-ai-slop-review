@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,7 +7,7 @@ import test from "node:test";
 import { createScanResult } from "../src/core/schema.ts";
 import { evaluateCorpus, loadCorpus, validateCorpus } from "../src/evaluation/corpus.ts";
 import { scanFiles } from "../src/scan.ts";
-import { runBlindHarnessEvaluation, type HarnessTranscript } from "../src/evaluation/harness.ts";
+import { loadBlindLabels, runBlindHarnessEvaluation, type HarnessTranscript } from "../src/evaluation/harness.ts";
 import type { CorpusCase } from "../src/evaluation/corpus.ts";
 import type { FindingDraft } from "../src/types.ts";
 
@@ -228,5 +228,36 @@ test("blind harness rejects missing and hallucinated verdict coverage", async ()
     assert.equal(hallucinated[0].coverageValid, false);
   } finally {
     rmSync(fixtures, { recursive: true, force: true });
+  }
+});
+
+test("blind harness rejects symlinked fixtures and oversized adapter dimensions", async () => {
+  const fixtures = mkdtempSync(path.join(tmpdir(), "review-harness-boundaries-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "review-harness-secret-"));
+  try {
+    writeFileSync(path.join(outside, "labels.json"), "secret");
+    symlinkSync(path.join(outside, "labels.json"), path.join(fixtures, "linked-labels.json"));
+    await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [], async () => ({
+      provider: "test", model: "test", toolCalls: [], verdicts: [], staticCandidates: 0, adjudicated: 0,
+    }), 1), /regular files and directories/);
+    rmSync(path.join(fixtures, "linked-labels.json"));
+    await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [], async () => ({
+      provider: "test", model: "test", toolCalls: Array.from({ length: 1_001 }, () => ({ name: "slop_context" })),
+      verdicts: [], staticCandidates: 0, adjudicated: 0,
+    }), 1), /invalid transcript/);
+  } finally {
+    rmSync(fixtures, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("blind label loading rejects oversized files before parsing", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "review-harness-label-size-"));
+  try {
+    const labels = path.join(directory, "labels.json");
+    writeFileSync(labels, " ".repeat(5 * 1024 * 1024 + 1));
+    assert.throws(() => loadBlindLabels(labels), /exceeds 5 MiB/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

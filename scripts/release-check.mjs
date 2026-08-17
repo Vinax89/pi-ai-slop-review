@@ -62,6 +62,7 @@ for (const file of required) {
   if (!packedPaths.includes(file)) fail(`packed package is missing ${file}`);
 }
 if (packedPaths.some((file) => file.startsWith("artifacts/verdict-corpus"))) fail("packed package must not contain artifacts/verdict-corpus fixtures");
+if (packedPaths.some((file) => file.startsWith("evaluation-private/"))) fail("packed package must not contain private verdict labels");
 console.log(`pack: ${pack.files.length} files, ${pack.unpackedSize} bytes unpacked, contents verified`);
 
 console.log("release-check passed — publish with `npm publish` (interactive; OTP/browser auth may be required).");

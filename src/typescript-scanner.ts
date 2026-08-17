@@ -453,7 +453,7 @@ function scanCatchClauses(sourceFile: ts.SourceFile, sourceHash: string, root: s
   return findings;
 }
 
-function scanExplicitPlaceholders(sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
+function scanExplicitPlaceholders(project: Project, sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
   const findings: FindingDraft[] = [];
   const safeLabel = (value: string, maxLength = 120): string => {
     const printable = value.replace(/[\u0000-\u001f\u007f]/g, "?");
@@ -474,7 +474,14 @@ function scanExplicitPlaceholders(sourceFile: ts.SourceFile, sourceHash: string,
       const errorConstructor = expression && ts.isNewExpression(expression) && ts.isIdentifier(expression.expression)
         ? expression.expression.text
         : undefined;
-      const message = expression && ts.isNewExpression(expression) && errorConstructor && ["Error", "TypeError", "RangeError"].includes(errorConstructor)
+      const constructorIdentifier = expression && ts.isNewExpression(expression) && ts.isIdentifier(expression.expression)
+        ? expression.expression
+        : undefined;
+      const constructorSymbol = constructorIdentifier ? project.checker.getSymbolAtLocation(constructorIdentifier) : undefined;
+      const standardConstructor = errorConstructor && ["Error", "TypeError", "RangeError"].includes(errorConstructor) &&
+        constructorSymbol?.declarations?.some((declaration) => project.program.isSourceFileDefaultLibrary(declaration.getSourceFile())) &&
+        constructorSymbol.declarations.every((declaration) => project.program.isSourceFileDefaultLibrary(declaration.getSourceFile()));
+      const message = expression && ts.isNewExpression(expression) && standardConstructor
         ? expression.arguments?.[0]
         : undefined;
       if (message && ts.isStringLiteralLike(message) && /\b(?:not[ -]?implemented|todo|placeholder)\b/i.test(message.text)) {
@@ -665,7 +672,7 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
       const remaining = maxFindings - findings.length;
       findings.push(...scanCatchClauses(sourceFile, sourceHash, root).slice(0, remaining));
       const placeholderRemaining = maxFindings - findings.length;
-      findings.push(...scanExplicitPlaceholders(sourceFile, sourceHash, root).slice(0, placeholderRemaining));
+      findings.push(...scanExplicitPlaceholders(project, sourceFile, sourceHash, root).slice(0, placeholderRemaining));
     }
   }
 

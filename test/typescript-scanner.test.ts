@@ -127,6 +127,8 @@ test("reports explicit placeholder-only bodies without treating ordinary throws 
       "export function pending() { throw new Error('Not implemented yet'); }",
       "export const later = () => { throw new Error('TODO placeholder'); };",
       "export const typed = () => { throw new TypeError('NotImplemented'); };",
+      "class RangeError {}",
+      "export const shadowed = () => { throw new RangeError('Not implemented'); };",
       "export function rejected() { throw new Error('Invalid input'); }",
       "export declare function external(): void;",
       "abstract class Base { abstract execute(): void; }",
@@ -139,6 +141,7 @@ test("reports explicit placeholder-only bodies without treating ordinary throws 
   assert.match(placeholders[0].message, /pending/);
   assert.match(placeholders[1].message, /later/);
   assert.match(placeholders[2].message, /typed/);
+  assert.doesNotMatch(placeholders.map((finding) => finding.message).join(" "), /shadowed/);
   assert.equal(placeholders[0].maximumAction, "observe");
   assert.match(placeholders[0].unknown.join(" "), /unsupported-operation|subclass/);
 });
