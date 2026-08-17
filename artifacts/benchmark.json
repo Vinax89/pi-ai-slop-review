@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-17T06:40:25.475Z",
+  "generatedAt": "2026-08-17T07:49:40.532Z",
   "runtime": {
     "node": "v24.19.0",
     "nodeVersions": {
@@ -47,22 +47,22 @@
     "graphResults": 1
   },
   "measurements": {
-    "coldScanMs": 512,
-    "recycledColdScanMs": 530.83,
-    "changedFileScanMs": 350.15,
-    "warmScanP50Ms": 1.73,
-    "warmScanP95Ms": 2.07,
+    "coldScanMs": 582.82,
+    "recycledColdScanMs": 564.81,
+    "changedFileScanMs": 340.11,
+    "warmScanP50Ms": 1.8,
+    "warmScanP95Ms": 2.17,
     "warmCacheHitRate": 1,
-    "warmWorkerCpuP50Ms": 1.78,
-    "coldWorkerHeapUsedMiB": 20.03,
-    "coldWorkerRssMiB": 218.03,
-    "largeAuditMs": 2276.16,
-    "largeWarmScanMs": 38.5,
-    "graphQueryMs": 0.68,
-    "rssHighWaterDeltaMiB": 14.32,
-    "heapUsedDeltaMiB": 5.06,
+    "warmWorkerCpuP50Ms": 1.77,
+    "coldWorkerHeapUsedMiB": 20.5,
+    "coldWorkerRssMiB": 239.79,
+    "largeAuditMs": 2284.85,
+    "largeWarmScanMs": 38.9,
+    "graphQueryMs": 0.65,
+    "rssHighWaterDeltaMiB": 14.7,
+    "heapUsedDeltaMiB": 5.08,
     "cancellationContained": true,
-    "activeProviderCancellationMs": 36.68,
+    "activeProviderCancellationMs": 35.64,
     "workerOomContained": true
   },
   "targets": {
@@ -82,12 +82,12 @@
     "note": "Targets are directional and never override deterministic findings, completeness, or containment."
   },
   "hashes": {
-    "code": "93eb13066009c3a232abd43e7991d8e4d64a17e7333e84028daf08891af399e2",
+    "code": "6d86c7e100e15d296fdd9a2f72d8cb5fab13954c0a039bc89ad6a6d19235f6f0",
     "corpus": "35bbedeb12c563cd8d7933fd13cf26ae0b75f8019ba4a27316782228e0f5e397",
     "rules": "d2f9bcb4bbb9c18df671539c7f1aa2ba3415036bb7e8da71ad825c596d69e578",
     "library": "269957342dd315bd24285d148b4d1b879b0c89bf2b6957d07ffcc3fd6a6796e7",
     "schema": "0e4028c5de643e430e3bb8634b38f0bd5a1eefb87460f3a7ffb97d404939bf01",
-    "package": "516ffb985137a6f41453129f306e9e5036721cc578b5497754050fe34e2f4b33",
+    "package": "97628fbea9f8d8c27ecacb3562f289570b4f7371177bf81c5333ba734b6bfabd",
     "config": "f40bf8dfca68c87616330a3fe8265a85b7aa9637f03c9b8a1785e92e4fe8e9f5",
     "runtime": "38bf291c23b6336ab253613d8093b51c5ad5805ba9bcc73fd5a27212a94fdb86"
   }

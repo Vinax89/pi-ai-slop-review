@@ -21,7 +21,7 @@ pi -e npm:pi-ai-slop-review
 A version-tagged Git installation is also supported:
 
 ```bash
-pi install git:github.com/Vinax89/pi-ai-slop-review@v2.0.0
+pi install git:github.com/Vinax89/pi-ai-slop-review@v2.0.1
 ```
 
 Pi packages execute code with the user's privileges. Review the source and [`docs/security.md`](docs/security.md) before installation.
