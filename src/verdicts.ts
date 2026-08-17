@@ -1,9 +1,10 @@
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { StateStore } from "./core/store.ts";
 import { fingerprint } from "./core/schema.ts";
 import { assessScanCompleteness } from "./core/completeness.ts";
+import { isInside, nearestExistingParent } from "./core/paths.ts";
 import { queryContext } from "./graph/query.ts";
 import { SCHEMA_VERSION, type FeedbackRecord, type Finding, type ScanResult, type Verdict, type VerdictRecord } from "./types.ts";
 
@@ -27,6 +28,13 @@ export interface VerdictDelta {
 }
 
 const VERDICTS = new Set<Verdict>(["confirmed", "dismissed", "needs-context"]);
+const MAX_VERDICT_BATCH = 20;
+const MAX_EVIDENCE_IDS = 50;
+const MAX_RATIONALE_LENGTH = 2_000;
+
+function normalizedRationale(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+}
 
 /** Hash every deterministic input available to adjudication. The scan content
  * hash deliberately invalidates conservatively when callers, tests, exports,
@@ -74,6 +82,9 @@ export function adjudicationContextFingerprint(
  * policy decisions.
  */
 export function recordVerdicts(rootDir: string, scan: ScanResult, entries: VerdictEntry[], stateRoot?: string): number {
+  if (entries.length < 1 || entries.length > MAX_VERDICT_BATCH) throw new Error(`verdict batch must contain 1 to ${MAX_VERDICT_BATCH} entries`);
+  const submittedIds = entries.map((entry) => entry.findingId);
+  if (new Set(submittedIds).size !== submittedIds.length) throw new Error("verdict batch contains duplicate finding IDs");
   const store = new StateStore(rootDir, stateRoot);
   const byId = new Map(scan.findings.map((finding) => [finding.id, finding]));
   const now = new Date().toISOString();
@@ -84,12 +95,14 @@ export function recordVerdicts(rootDir: string, scan: ScanResult, entries: Verdi
     const finding = byId.get(entry.findingId);
     if (!finding) throw new Error(`verdict references finding '${entry.findingId}' which is not in the latest review`);
     const evidenceIds = [...new Set(entry.evidenceIds ?? [])];
+    if (evidenceIds.length > MAX_EVIDENCE_IDS) throw new Error(`verdict for '${entry.findingId}' exceeds ${MAX_EVIDENCE_IDS} evidence IDs`);
     const knownEvidenceIds = new Set([...finding.evidenceIds, ...finding.counterEvidenceIds]);
     for (const evidenceId of evidenceIds) {
       if (!knownEvidenceIds.has(evidenceId)) throw new Error(`verdict for '${entry.findingId}' references unknown evidence '${evidenceId}'`);
     }
-    const evidence = (entry.rationale ?? entry.evidence ?? "").trim();
+    const evidence = normalizedRationale(entry.rationale ?? entry.evidence ?? "");
     if (!evidence) throw new Error(`verdict for '${entry.findingId}' requires evidence`);
+    if (evidence.length > MAX_RATIONALE_LENGTH) throw new Error(`verdict for '${entry.findingId}' rationale exceeds ${MAX_RATIONALE_LENGTH} characters`);
     records.push({
       schemaVersion: SCHEMA_VERSION,
       findingId: finding.id,
@@ -266,13 +279,22 @@ export function verdictManifest(scan: ScanResult, delta: VerdictDelta): VerdictM
 }
 
 export function writeVerdictManifest(rootDir: string, scan: ScanResult, delta: VerdictDelta, exportPath: string): string {
-  const absolute = path.resolve(rootDir, exportPath);
-  mkdirSync(path.dirname(absolute), { recursive: true });
-  const temporaryPath = `${absolute}.${process.pid}.${Date.now()}.tmp`;
+  const root = realpathSync(rootDir);
+  const absolute = path.resolve(root, exportPath);
+  if (!isInside(root, absolute) || !isInside(root, realpathSync(nearestExistingParent(absolute)))) {
+    throw new Error("verdict manifest path resolves outside the project root");
+  }
+  mkdirSync(path.dirname(absolute), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${absolute}.${process.pid}.tmp`;
+  let descriptor: number | undefined;
   try {
-    writeFileSync(temporaryPath, `${JSON.stringify(verdictManifest(scan, delta), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    descriptor = openSync(temporaryPath, "wx", 0o600);
+    writeFileSync(descriptor, `${JSON.stringify(verdictManifest(scan, delta), null, 2)}\n`, "utf8");
+    closeSync(descriptor);
+    descriptor = undefined;
     renameSync(temporaryPath, absolute);
   } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
     rmSync(temporaryPath, { force: true });
   }
   return absolute;

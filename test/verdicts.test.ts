@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -170,6 +170,28 @@ test("verdict recording replaces prior verdicts per finding and rejects bad inpu
     () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", rationale: "cited", evidenceIds: ["evidence:unknown"] }], stateRoot),
     /references unknown evidence/,
   );
+  assert.throws(
+    () => recordVerdicts(root, result, [
+      { findingId: finding.id, verdict: "confirmed", evidence: "first" },
+      { findingId: finding.id, verdict: "dismissed", evidence: "second" },
+    ], stateRoot),
+    /duplicate finding IDs/,
+  );
+  assert.throws(
+    () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "x".repeat(2_001) }], stateRoot),
+    /rationale exceeds 2000 characters/,
+  );
+  recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "safe\nforged heading\u0000" }], stateRoot);
+  assert.equal(verdictLedger(root, stateRoot)[0].evidence, "safe forged heading");
+});
+
+test("verdict recording enforces the checkpoint batch bound", () => {
+  const root = fixture();
+  const findings = Array.from({ length: 21 }, (_, index) => draft({ anchor: `item-${index}`, line: index + 1 }));
+  const result = resultWith(root, findings);
+  assert.throws(() => recordVerdicts(root, result, result.findings.map((finding) => ({
+    findingId: finding.id, verdict: "confirmed" as const, evidence: "reviewed",
+  })), path.join(root, "state")), /1 to 20 entries/);
 });
 
 test("verdict outcomes map to conservative feedback outcomes", () => {
@@ -251,6 +273,17 @@ test("verdict manifest serializes the delta and writes atomically", () => {
   const parsed = JSON.parse(readFileSync(exportPath, "utf8")) as { candidates: number; adjudicated: Array<{ findingId: string }> };
   assert.equal(parsed.candidates, 1);
   assert.equal(parsed.adjudicated[0].findingId, finding.id);
+});
+
+test("verdict manifest rejects traversal and symlink escapes", () => {
+  const root = fixture();
+  const outside = mkdtempSync(path.join(tmpdir(), "ai-slop-verdicts-outside-"));
+  const result = resultWith(root, [draft()]);
+  const delta = classifyVerdicts(root, result, []);
+  assert.throws(() => writeVerdictManifest(root, result, delta, path.join("..", "escaped.json")), /outside the project root/);
+  mkdirSync(path.join(root, "reports"));
+  symlinkSync(outside, path.join(root, "reports", "linked"));
+  assert.throws(() => writeVerdictManifest(root, result, delta, path.join("reports", "linked", "escaped.json")), /outside the project root/);
 });
 
 test("finding queues omit report-only families by default and note the omission", () => {

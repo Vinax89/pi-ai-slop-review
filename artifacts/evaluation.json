@@ -400,14 +400,37 @@
       "actualConfidence": null,
       "vetoMatched": null,
       "unsafeAction": false
+    },
+    {
+      "id": "explicit-placeholder-python-validation",
+      "repository": "py-placeholder-validation",
+      "language": "python",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "ordinary-error-python-holdout",
+      "repository": "py-ordinary-error-holdout",
+      "language": "python",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
+      "unsafeAction": false
     }
   ],
-  "total": 35,
-  "passed": 35,
-  "hardNegatives": 19,
+  "total": 37,
+  "passed": 37,
+  "hardNegatives": 20,
   "unsafeHardNegativeActions": 0,
   "actionablePrecision": 1,
-  "abstentionRate": 0.8857142857142857,
+  "abstentionRate": 0.8918918918918919,
   "repositoryLeakage": [],
   "bySplit": {
     "train": {
@@ -416,13 +439,13 @@
       "unsafeHardNegativeActions": 0
     },
     "validation": {
-      "total": 9,
-      "passed": 9,
+      "total": 10,
+      "passed": 10,
       "unsafeHardNegativeActions": 0
     },
     "holdout": {
-      "total": 10,
-      "passed": 10,
+      "total": 11,
+      "passed": 11,
       "unsafeHardNegativeActions": 0
     }
   },
@@ -438,8 +461,8 @@
       "unsafeHardNegativeActions": 0
     },
     "python": {
-      "total": 12,
-      "passed": 12,
+      "total": 14,
+      "passed": 14,
       "unsafeHardNegativeActions": 0
     }
   },
@@ -484,10 +507,10 @@
     "arch": "x64"
   },
   "hashes": {
-    "code": "8ba0d2d2a37a25cbbb91289a08e89814b0328c0e994bf8e65484d27611c3f1a8",
-    "corpus": "2405fef135421244438c2088926846cd1874f690e3fc7211498a1fa1f250c96d",
+    "code": "1d6ce8839f2ee0180244d3f2e02414c5e5b21ab58f394fa5b024602514134ff3",
+    "corpus": "85f0da3a67e389b44b3ee02ba8aa74ecfa6001e030cdae3ec132c7f3e14b8a7b",
     "rules": "15a6089fe836de22bdc842378279f2413ce6b940ebed3bdb814fd81668e4f3e3",
-    "library": "e5a860d1190dcd3a017b49d0244d6738269b24c7e07943c72e74a811e0bf0195",
+    "library": "a7cb3f688e47ecf3aa7d80ea6c8be77e48dd81f9ba6df989c1806bd98212170f",
     "schema": "0e4028c5de643e430e3bb8634b38f0bd5a1eefb87460f3a7ffb97d404939bf01",
     "package": "97628fbea9f8d8c27ecacb3562f289570b4f7371177bf81c5333ba734b6bfabd",
     "config": "f40bf8dfca68c87616330a3fe8265a85b7aa9637f03c9b8a1785e92e4fe8e9f5",

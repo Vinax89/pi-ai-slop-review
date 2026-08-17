@@ -115,6 +115,28 @@ test("reports only private production Python wrappers as heuristic observations"
   assert.equal(wrappers[0].maximumAction, "observe");
 });
 
+test("reports explicit Python placeholders without treating ordinary raises or pass as placeholders", async () => {
+  const root = project({
+    "input.py": [
+      "def pending():",
+      "    raise NotImplementedError('subclass must implement')",
+      "async def later():",
+      "    raise NotImplementedError",
+      "def rejected():",
+      "    raise ValueError('invalid input')",
+      "def empty_hook():",
+      "    pass",
+    ].join("\n"),
+  });
+  const placeholders = (await scanPythonFiles(root, ["input.py"])).findings.filter(
+    (finding) => finding.ruleId === "structure.explicit-placeholder",
+  );
+  assert.equal(placeholders.length, 2);
+  assert.match(placeholders[0].message, /pending/);
+  assert.match(placeholders[1].message, /later/);
+  assert.ok(placeholders.every((finding) => finding.maximumAction === "observe"));
+});
+
 test("distinguishes suppressed exceptions, hidden fallbacks, intentional boundaries, and typed errors", async () => {
   const root = project({
     "input.py": [

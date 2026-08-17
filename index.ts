@@ -950,6 +950,7 @@ export default async function (pi: any): Promise<void> {
       if (deltaSinceAudit) outcome.warnings.push("repository delta audit scoped to files changed since the last audit baseline (mtime-based)");
       else if (deltaScope) outcome.warnings.push("repository delta audit scoped to files changed since git HEAD");
       if (discoveryTruncated) outcome.warnings.push(`repository discovery stopped at ${loadedConfig!.config.limits.maxFiles} files; result completeness is partial`);
+      pendingAdjudication.clear();
       lastOutcome = outcome;
       ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} findings · ${outcome.delta.added.length} new`);
       return { content: [{ type: "text", text: reviewText(outcome, 75) }], details: outcome };
@@ -1095,9 +1096,11 @@ export default async function (pi: any): Promise<void> {
       scanId: Type.String({ description: "Exact scan ID from slop_review" }),
       entries: Type.Array(Type.Object({
         findingId: Type.String({ description: "Exact finding ID from the current slop_findings batch" }),
-        verdict: Type.String({ description: "confirmed, dismissed, or needs-context" }),
+        verdict: Type.Union([Type.Literal("confirmed"), Type.Literal("dismissed"), Type.Literal("needs-context")], {
+          description: "One closed adjudication verdict",
+        }),
         evidenceIds: Type.Optional(Type.Array(Type.String(), { maxItems: 50 })),
-        rationale: Type.String({ description: "Concrete source, caller, contract, test, or missing-context rationale" }),
+        rationale: Type.String({ description: "Concrete source, caller, contract, test, or missing-context rationale (1–2,000 characters; enforced transactionally)" }),
       }), { maxItems: 20 }),
     }),
     async execute(_toolCallId: string, params: { scanId: string; entries: VerdictEntry[] }, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {
@@ -1114,10 +1117,12 @@ export default async function (pi: any): Promise<void> {
       const count = recordVerdicts(ctx.cwd, lastOutcome.result, params.entries);
       pendingAdjudication.delete(params.scanId);
       const records = verdictLedger(ctx.cwd).filter((record) => record.scanId === params.scanId);
+      const recordsById = new Map(records.map((record) => [record.findingId, record]));
       const byId = new Map(lastOutcome.result.findings.map((finding) => [finding.id, finding]));
       const lines = params.entries.map((entry) => {
         const finding = byId.get(entry.findingId)!;
-        return `- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — ${entry.verdict}\n  ${entry.rationale}`;
+        const record = recordsById.get(finding.id)!;
+        return `- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — ${record.verdict}\n  ${record.evidence}`;
       });
       const text = [`VERDICT BATCH COMMITTED (${count} updated)`, ...lines, `Coverage checkpoint: ${records.length}/${lastOutcome.result.findings.length} static candidates persisted for scan ${params.scanId}`].join("\n");
       return { content: [{ type: "text", text }], details: { count, adjudicated: records.length, candidates: lastOutcome.result.findings.length, scanId: params.scanId } };

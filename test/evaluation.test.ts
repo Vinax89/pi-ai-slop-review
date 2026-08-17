@@ -205,6 +205,27 @@ test("blind harness rejects invalid repeat counts and duplicate labels", async (
       { findingKey: "same", verdict: "confirmed" },
       { findingKey: "same", verdict: "dismissed" },
     ], invoke), /duplicate/);
+    await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [{ findingKey: "", verdict: "confirmed" }], invoke), /labels are invalid/);
+    await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [{ findingKey: "expected", verdict: "confirmed" }], async () => ({
+      provider: "test", model: "test", toolCalls: [], verdicts: [{ findingKey: "expected", verdict: "invalid" as never }], staticCandidates: 1, adjudicated: 1,
+    }), 1), /invalid transcript/);
+  } finally {
+    rmSync(fixtures, { recursive: true, force: true });
+  }
+});
+
+test("blind harness rejects missing and hallucinated verdict coverage", async () => {
+  const fixtures = mkdtempSync(path.join(tmpdir(), "review-harness-coverage-"));
+  try {
+    const labels = [{ findingKey: "expected", verdict: "confirmed" as const }];
+    const missing = await runBlindHarnessEvaluation(fixtures, labels, async () => ({
+      provider: "test", model: "test", toolCalls: [], verdicts: [], staticCandidates: 1, adjudicated: 0,
+    }), 1);
+    assert.equal(missing[0].coverageValid, false);
+    const hallucinated = await runBlindHarnessEvaluation(fixtures, labels, async () => ({
+      provider: "test", model: "test", toolCalls: [], verdicts: [{ findingKey: "invented", verdict: "confirmed" }], staticCandidates: 1, adjudicated: 1,
+    }), 1);
+    assert.equal(hallucinated[0].coverageValid, false);
   } finally {
     rmSync(fixtures, { recursive: true, force: true });
   }

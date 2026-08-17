@@ -158,8 +158,7 @@ export async function collectGraphEvidence(
     if (mode === "repository" && !skipped.length) {
       const allNodes = store.fileNodes().filter((node) => reviewedFiles.has(node.filePath));
       const scopedEdges = store.importEdges().filter((edge) => reviewedFiles.has(edge.filePath));
-      for (const cycle of importCycles(allNodes, scopedEdges)) {
-        if (cycle.typeOnlyEdgeCount === cycle.edgeCount) continue;
+      for (const cycle of importCycles(allNodes, scopedEdges, config.limits.maxFindings - findings.length, true)) {
         if (findings.length >= config.limits.maxFindings) break;
         const representative = allNodes.find((node) => node.kind === "file" && node.filePath === cycle.files[0]);
         if (!representative) continue;

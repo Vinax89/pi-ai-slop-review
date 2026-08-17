@@ -21,23 +21,24 @@ export function formatImportCycle(files: string[], maxFiles = 8): string {
  * Find file-level import cycles from resolved repository edges. Components are
  * canonicalized so output is stable across SQLite and traversal ordering.
  */
-export function importCycles(nodes: GraphNode[], edges: GraphEdge[]): ImportCycle[] {
+export function importCycles(nodes: GraphNode[], edges: GraphEdge[], maxCycles = Number.MAX_SAFE_INTEGER, runtimeOnly = false): ImportCycle[] {
+  const limit = Math.max(0, Math.floor(maxCycles));
+  if (limit === 0) return [];
   const filesById = new Map(nodes.filter((node) => node.kind === "file").map((node) => [node.id, node.filePath]));
   const adjacency = new Map<string, Array<{ to: string; typeOnly: boolean }>>();
-  const reverse = new Map<string, string[]>();
+  const reverse = new Map<string, Set<string>>();
   for (const edge of edges) {
     if (edge.kind !== "imports" || !filesById.has(edge.fromId) || !filesById.has(edge.toId)) continue;
     const outgoing = adjacency.get(edge.fromId) ?? [];
     outgoing.push({ to: edge.toId, typeOnly: edge.metadata.typeOnly === true });
     adjacency.set(edge.fromId, outgoing);
-    const incoming = reverse.get(edge.toId) ?? [];
-    incoming.push(edge.fromId);
+    const incoming = reverse.get(edge.toId) ?? new Set<string>();
+    incoming.add(edge.fromId);
     reverse.set(edge.toId, incoming);
   }
   for (const outgoing of adjacency.values()) {
     outgoing.sort((left, right) => left.to.localeCompare(right.to) || Number(left.typeOnly) - Number(right.typeOnly));
   }
-  for (const incoming of reverse.values()) incoming.sort();
 
   const visited = new Set<string>();
   const finishOrder: string[] = [];
@@ -70,7 +71,7 @@ export function importCycles(nodes: GraphNode[], edges: GraphEdge[]): ImportCycl
     while (stack.length) {
       const current = stack.pop()!;
       component.push(current);
-      for (const previous of reverse.get(current) ?? []) {
+      for (const previous of [...(reverse.get(current) ?? [])].sort()) {
         if (assigned.has(previous)) continue;
         assigned.add(previous);
         stack.push(previous);
@@ -78,14 +79,22 @@ export function importCycles(nodes: GraphNode[], edges: GraphEdge[]): ImportCycl
     }
     components.push(component);
   }
-  return components.flatMap((component) => {
+  const ordered = components.map((component) => ({
+    component,
+    files: component.map((id) => filesById.get(id)!).sort(),
+  })).filter(({ component }) => component.length > 1 || (adjacency.get(component[0]!) ?? []).some((edge) => edge.to === component[0]))
+    .sort((left, right) => left.files.join("\0").localeCompare(right.files.join("\0")));
+  const cycles: ImportCycle[] = [];
+  for (const { component, files } of ordered) {
     const members = new Set(component);
     const internalEdges = component.flatMap((id) => (adjacency.get(id) ?? []).filter((edge) => members.has(edge.to)));
-    if (component.length === 1 && !internalEdges.some((edge) => edge.to === component[0])) return [];
-    return [{
-      files: component.map((id) => filesById.get(id)!).sort(),
+    const cycle = {
+      files,
       edgeCount: internalEdges.length,
       typeOnlyEdgeCount: internalEdges.filter((edge) => edge.typeOnly).length,
-    }];
-  }).sort((left, right) => left.files.join("\0").localeCompare(right.files.join("\0")));
+    };
+    if (!runtimeOnly || cycle.typeOnlyEdgeCount < cycle.edgeCount) cycles.push(cycle);
+    if (cycles.length >= limit) break;
+  }
+  return cycles;
 }

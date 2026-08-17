@@ -11,6 +11,12 @@
 - Store cycle edge provenance as bounded counts instead of potentially large identifier arrays.
 - Render cycle membership without implying a traversal order and sanitize source-controlled placeholder names in diagnostics.
 - Add release-facing skill assertions for conservative cycle and placeholder adjudication without third-party branding.
+- Reject verdict-manifest traversal and symlink escapes, and create exports through exclusive private temporary files.
+- Enforce verdict batch, evidence, duplicate-ID, and normalized-rationale bounds in the transactional storage layer.
+- Require exact private-label/static/adjudication set equality and validate untrusted blind-harness adapter transcripts.
+- Deduplicate reverse cycle connectivity, budget cycle results deterministically, and retain exact count-only edge provenance.
+- Detect explicit Python `NotImplementedError` placeholders and standard JavaScript error-subclass placeholder markers conservatively.
+- Verify actual core-tool registrations and per-tool prompt guidance, and include the benchmark in `release:check`.
 
 ## 2.0.1
 

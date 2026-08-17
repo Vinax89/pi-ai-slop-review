@@ -32,6 +32,17 @@ test("skill keeps conservative evidence policy and explicit repository aliases",
   assert.doesNotMatch(skill, /Confirm an unexported identity wrapper with no discovered callers/);
 });
 
+test("every registered Pi tool names itself in each prompt guideline", () => {
+  const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+  const registrations = [...source.matchAll(/pi\.registerTool\(\{[\s\S]*?name: "([^"]+)"[\s\S]*?promptGuidelines: \[([\s\S]*?)\],\n\s+parameters:/g)];
+  assert.ok(registrations.length >= 9);
+  for (const [, toolName, block] of registrations) {
+    const guidelines = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    assert.ok(guidelines.length > 0, `${toolName} has no prompt guidelines`);
+    for (const guideline of guidelines) assert.match(guideline, new RegExp(`\\b${toolName}\\b`), `${toolName} guideline does not name its tool`);
+  }
+});
+
 test("npm pack contains runtime, schema, documentation, and metadata artifacts", () => {
   const files = packedFiles();
   for (const required of ["dist/src/isolated-scan.js", "dist/src/python_common.py", "index.ts", "skills/ai-slop-review/SKILL.md", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "schema/config.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md"]) {

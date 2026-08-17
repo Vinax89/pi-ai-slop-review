@@ -29,6 +29,7 @@ const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 const completionAudit = readFileSync(new URL("../artifacts/completion-audit.md", import.meta.url), "utf8");
 const verdictAcceptance = readFileSync(new URL("../artifacts/verdict-acceptance.md", import.meta.url), "utf8");
 const skill = readFileSync(new URL("../skills/ai-slop-review/SKILL.md", import.meta.url), "utf8");
+const extensionSource = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 const version = packageJson.version;
 if (shrinkwrap.version !== version) fail(`npm-shrinkwrap.json version ${shrinkwrap.version} != package.json ${version}`);
 if (shrinkwrap.packages?.[""]?.version !== version) fail(`shrinkwrap root package version ${shrinkwrap.packages?.[""]?.version} != package.json ${version}`);
@@ -39,6 +40,7 @@ const requiredReviewTools = ["slop_review", "slop_findings", "slop_context", "sl
 for (const tool of requiredReviewTools) {
   if (!skill.includes(`\`${tool}\``)) fail(`skill is missing required tool ${tool}`);
   if (!verdictAcceptance.includes(tool)) fail(`verdict acceptance reproduction command is missing ${tool}`);
+  if (!extensionSource.includes(`name: "${tool}"`)) fail(`extension does not register required tool ${tool}`);
 }
 for (const retired of ["slop_record_verdicts", "slop_verify_verdicts"]) {
   if (skill.includes(`\`${retired}\``)) fail(`skill still requires retired tool ${retired}`);
@@ -48,7 +50,10 @@ console.log(`version: ${version} (package.json, shrinkwrap, README tag consisten
 // 3. Full validation gate (typecheck + compile + tests + evaluation + audit).
 execFileSync("npm", ["run", "validate"], { stdio: "inherit" });
 
-// 4. Pack contents: required runtime files present, verdict fixtures excluded.
+// 4. Performance and containment gate.
+execFileSync("npm", ["run", "benchmark"], { stdio: "inherit" });
+
+// 5. Pack contents: required runtime files present, verdict fixtures excluded.
 const packJson = JSON.parse(execFileSync("npm", ["pack", "--ignore-scripts", "--dry-run", "--json"], { encoding: "utf8" }));
 const pack = Array.isArray(packJson) ? packJson[0] : Object.values(packJson)[0];
 const packedPaths = pack.files.map((file) => file.path);

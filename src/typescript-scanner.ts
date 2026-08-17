@@ -471,10 +471,13 @@ function scanExplicitPlaceholders(sourceFile: ts.SourceFile, sourceHash: string,
     if (body && ts.isBlock(body) && body.statements.length === 1) {
       const statement = body.statements[0];
       const expression = ts.isThrowStatement(statement) ? statement.expression : undefined;
-      const message = expression && ts.isNewExpression(expression) && expression.expression.getText(sourceFile) === "Error"
+      const errorConstructor = expression && ts.isNewExpression(expression) && ts.isIdentifier(expression.expression)
+        ? expression.expression.text
+        : undefined;
+      const message = expression && ts.isNewExpression(expression) && errorConstructor && ["Error", "TypeError", "RangeError"].includes(errorConstructor)
         ? expression.arguments?.[0]
         : undefined;
-      if (message && ts.isStringLiteralLike(message) && /\b(?:not implemented|todo|placeholder)\b/i.test(message.text)) {
+      if (message && ts.isStringLiteralLike(message) && /\b(?:not[ -]?implemented|todo|placeholder)\b/i.test(message.text)) {
         const name = displayName(functionNode!);
         findings.push(finding(sourceFile, sourceHash, root, statement, {
           anchor: structuralAnchor(node, "explicit-placeholder"),

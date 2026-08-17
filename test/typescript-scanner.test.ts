@@ -126,6 +126,7 @@ test("reports explicit placeholder-only bodies without treating ordinary throws 
     "input.ts": [
       "export function pending() { throw new Error('Not implemented yet'); }",
       "export const later = () => { throw new Error('TODO placeholder'); };",
+      "export const typed = () => { throw new TypeError('NotImplemented'); };",
       "export function rejected() { throw new Error('Invalid input'); }",
       "export declare function external(): void;",
       "abstract class Base { abstract execute(): void; }",
@@ -134,9 +135,10 @@ test("reports explicit placeholder-only bodies without treating ordinary throws 
   const placeholders = scanTypeScriptFiles(root, ["input.ts"]).findings.filter(
     (finding) => finding.ruleId === "structure.explicit-placeholder",
   );
-  assert.equal(placeholders.length, 2);
+  assert.equal(placeholders.length, 3);
   assert.match(placeholders[0].message, /pending/);
   assert.match(placeholders[1].message, /later/);
+  assert.match(placeholders[2].message, /typed/);
   assert.equal(placeholders[0].maximumAction, "observe");
   assert.match(placeholders[0].unknown.join(" "), /unsupported-operation|subclass/);
 });

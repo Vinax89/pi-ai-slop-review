@@ -382,6 +382,30 @@ def scan_tree(root: Path, file_path: Path, source: str, tree: ast.AST) -> list[d
                     )
                 )
 
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and len(node.body) == 1:
+            statement = node.body[0]
+            raised = statement.exc if isinstance(statement, ast.Raise) else None
+            constructor = raised.func if isinstance(raised, ast.Call) else raised
+            if isinstance(constructor, ast.Name) and constructor.id == "NotImplementedError":
+                findings.append(
+                    finding(
+                        root=root,
+                        file_path=file_path,
+                        source=source,
+                        lines=lines,
+                        node=statement,
+                        anchor=f"function:{node.name}:explicit-placeholder",
+                        rule_id="structure.explicit-placeholder",
+                        classification="context_conflict",
+                        confidence="C2",
+                        risk="R2",
+                        maximum_action="observe",
+                        message=f"Function '{node.name}' has an explicit placeholder-only implementation",
+                        evidence=["Python AST confirms the entire function body raises NotImplementedError"],
+                        unknown=["the placeholder may be an intentional unsupported-operation, protocol, or subclass contract"],
+                    )
+                )
+
         if isinstance(node, ast.ExceptHandler):
             body = node.body
             function = next(
