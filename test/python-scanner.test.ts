@@ -54,6 +54,18 @@ test("resolves stdlib, local, declared, workspace, and inline-script imports", a
   }
 });
 
+test("resolves dependencies declared in PEP 735 dependency groups", async () => {
+  const root = project({
+    "pyproject.toml": "[project]\nname = 'fixture'\nversion = '0.0.0'\n\n[dependency-groups]\ndev = ['pytest>=8', 'basedpyright>=1.20']\n",
+    "input.py": "import pytest\nimport basedpyright\nimport genuinely_missing\n",
+  });
+  const unresolved = (await scanPythonFiles(root, ["input.py"])).findings.filter(
+    (finding) => finding.ruleId === "dependency.unresolved",
+  );
+  assert.equal(unresolved.length, 1);
+  assert.match(unresolved[0]?.message ?? "", /genuinely_missing/);
+});
+
 test("suppresses type-checking, optional, and platform-specific imports", async () => {
   const root = project({
     "input.py": [
@@ -113,6 +125,36 @@ test("reports only private production Python wrappers as heuristic observations"
   assert.equal(wrappers[0].filePath, "input.py");
   assert.equal(wrappers[0].confidence, "C1");
   assert.equal(wrappers[0].maximumAction, "observe");
+});
+
+test("reports explicit Python placeholders without treating ordinary raises or pass as placeholders", async () => {
+  const root = project({
+    "input.py": [
+      "def pending():",
+      "    raise NotImplementedError('subclass must implement')",
+      "async def later():",
+      "    raise NotImplementedError",
+      "def rejected():",
+      "    raise ValueError('invalid input')",
+      "def empty_hook():",
+      "    pass",
+      "def shadowed(NotImplementedError):",
+      "    raise NotImplementedError('ordinary project exception')",
+    ].join("\n"),
+  });
+  const placeholders = (await scanPythonFiles(root, ["input.py"])).findings.filter(
+    (finding) => finding.ruleId === "structure.explicit-placeholder",
+  );
+  assert.equal(placeholders.length, 2);
+  assert.match(placeholders[0].message, /pending/);
+  assert.match(placeholders[1].message, /later/);
+  assert.ok(placeholders.every((finding) => finding.maximumAction === "observe"));
+  const shadowedRoot = project({
+    "input.py": "class NotImplementedError(Exception):\n    pass\ndef project_error():\n    raise NotImplementedError('ordinary project exception')\n",
+  });
+  assert.equal((await scanPythonFiles(shadowedRoot, ["input.py"])).findings.some(
+    (finding) => finding.ruleId === "structure.explicit-placeholder",
+  ), false);
 });
 
 test("distinguishes suppressed exceptions, hidden fallbacks, intentional boundaries, and typed errors", async () => {
@@ -212,6 +254,105 @@ test("treats named and annotated boolean fallbacks as intentional predicate outc
   });
   const findings = await scanPythonFiles(root, ["input.py"]);
   assert.equal(findings.findings.some((finding) => finding.ruleId === "data.hidden-catch-fallback"), false);
+});
+
+test("detects post-handler fallbacks, validator skips, and conditionally unbound locals", async () => {
+  const root = project({
+    "check_inputs.py": [
+      "def _canonical_repo(path):",
+      "    try:",
+      "        return path.read_text()",
+      "    except OSError:",
+      "        pass",
+      "    return 'owner/repository'",
+      "def parse_inputs(paths):",
+      "    for path in paths:",
+      "        try:",
+      "            path.read_text()",
+      "        except OSError:",
+      "            continue",
+      "def parse(document):",
+      "    if isinstance(document, dict):",
+      "        layout = document.get('layout')",
+      "    return layout",
+    ].join("\n"),
+  });
+  const findings = (await scanPythonFiles(root, ["check_inputs.py"])).findings;
+  assert.equal(findings.filter((finding) => finding.ruleId === "data.hidden-catch-fallback").length, 1);
+  assert.equal(findings.filter((finding) => finding.ruleId === "errors.suppressed").length, 1);
+  assert.equal(findings.filter((finding) => finding.ruleId === "correctness.conditionally-unbound-local").length, 1);
+});
+
+test("does not flag documented best-effort skips or locals assigned on every branch", async () => {
+  const root = project({
+    "input.py": [
+      "def validate_optional(paths):",
+      "    for path in paths:",
+      "        try:",
+      "            path.read_text()",
+      "        except OSError:  # Optional input is best-effort.",
+      "            continue",
+      "def parse(document):",
+      "    if isinstance(document, dict):",
+      "        layout = document.get('layout')",
+      "    else:",
+      "        layout = None",
+      "    return layout",
+      "def scoped(values, enabled):",
+      "    global CACHE",
+      "    if enabled:",
+      "        CACHE = 1",
+      "        labels = [item for item in values]",
+      "    result = [item for item in values]",
+      "    return CACHE, result",
+      "def terminating(enabled):",
+      "    if enabled:",
+      "        value = 1",
+      "    else:",
+      "        raise ValueError('disabled')",
+      "    return value",
+      "def correlated(enabled):",
+      "    ready = False",
+      "    if enabled:",
+      "        value = 1",
+      "        ready = True",
+      "    if ready:",
+      "        return value",
+      "    return None",
+      "def _matches_value(value):",
+      "    try:",
+      "        if parse(value):",
+      "            return True",
+      "    except ValueError:",
+      "        pass",
+      "    return False",
+    ].join("\n"),
+  });
+  const findings = (await scanPythonFiles(root, ["input.py"])).findings;
+  assert.equal(findings.some((finding) => finding.ruleId === "errors.suppressed"), false);
+  assert.equal(findings.some((finding) => finding.ruleId === "correctness.conditionally-unbound-local"), false);
+});
+
+test("reports inert conditional checks inside tests", async () => {
+  const root = project({
+    "test_ordering.py": [
+      "def test_steps_ordered():",
+      "    previous = -1",
+      "    for number in steps:",
+      "        if number < previous:",
+      "            pass",
+      "        previous = number",
+      "def test_steps_checked():",
+      "    for number in steps:",
+      "        if number < 0:",
+      "            raise AssertionError(number)",
+    ].join("\n"),
+  });
+  const findings = (await scanPythonFiles(root, ["test_ordering.py"])).findings.filter(
+    (finding) => finding.ruleId === "assurance.inert-test-check",
+  );
+  assert.equal(findings.length, 1);
+  assert.match(findings[0]?.message ?? "", /cannot fail/);
 });
 
 test("skips generated and syntactically invalid Python", async () => {

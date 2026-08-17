@@ -4,7 +4,7 @@ A skill-first Pi package for evidence-backed LLM review of TypeScript, JavaScrip
 
 ## Requirements
 
-Requires Node.js 22.7 or newer because the package's TypeScript entry points use Node's type stripping and type transformation runtime flags. Node 24 is tested.
+Requires Node.js 22.7 or newer because the package's TypeScript entry points use Node's erasable type stripping. The scripts are compatible with Node 22 through Node 26.
 
 The Pi TUI, TypeBox, and optional critic API integrations are declared as optional peer modules. The package entrypoint can be inspected or imported without those host peers; the Pi integration loads its UI/schema peers only when the extension factory runs, and critic support reports a clear missing-peer error only when `/slop_critics` is invoked.
 
@@ -21,7 +21,7 @@ pi -e npm:pi-ai-slop-review
 A version-tagged Git installation is also supported:
 
 ```bash
-pi install git:github.com/Vinax89/pi-ai-slop-review@v2.0.1
+pi install git:github.com/Vinax89/pi-ai-slop-review@v2.0.2
 ```
 
 Pi packages execute code with the user's privileges. Review the source and [`docs/security.md`](docs/security.md) before installation.
@@ -51,7 +51,7 @@ Raw extension commands remain available for deterministic scanning, state, and d
 - `/slop-claims <text>` checks deterministic completion claims against configured evidence.
 - `/slop-context <symbol-or-path>` queries callers, tests, specifications, and public-surface context.
 - The `slop_intent` tool builds an evidence-cited decision trace plus paper-derived dimensions (relevance, factuality, density, repetition, templatedness, coherence, and tone). It accepts an optional artifact/task/audience review profile; unknown dimensions remain unknown, the LLM interprets the evidence, and a human makes the final determination.
-- `slop_intent` can compute bounded local text/code forensics when `includeForensics` is enabled (default): a model-free document-bigram perplexity proxy, sentence/line burstiness, argument dependency, falsifiable-claim and jargon rates, section interchangeability, repetition and boilerplate rates, logic-density rates, and a local stylometric fingerprint. `calibrateProjectSignals` accepts caller-supplied source-hash-linked history for descriptive density drift; it does not read Git history or label automation.
+- `slop_intent` can compute bounded local text/code forensics only when `includeForensics` is explicitly enabled; it is disabled by default. The opt-in result includes a model-free document-bigram perplexity proxy, sentence/line burstiness, argument dependency, falsifiable-claim and jargon rates, section interchangeability, repetition and boilerplate rates, logic-density rates, and a local stylometric fingerprint. `calibrateProjectSignals` accepts caller-supplied source-hash-linked history for descriptive density drift; it does not read Git history or label automation.
 - `slop_provenance` verifies bounded project-local artifact hashes and Ed25519-signed provenance manifests against configured trust keys, then checks explicitly linked cross-modal descriptors for missing links, timestamp mismatches, and caption inconsistencies. Trusted provenance supports origin assertions but does not prove authorship or synthetic generation.
 - `slop_clusters` analyzes caller-supplied offline publishing or repository events for synchronized shared hashes/templates and reports domain-level repetition patterns. It performs no network collection, account termination, or automatic downranking.
 - Full vendor C2PA profile coverage, SynthID detection, generator-specific neural classifiers, and platform-scale S-CTS coordination remain unsupported until explicit media-ingestion, detector, reference-corpus, and network-evidence contracts exist.
@@ -63,16 +63,20 @@ Raw extension commands remain available for deterministic scanning, state, and d
 - `/slop-experiment` runs bounded pure-expression property, metamorphic, shadow, mutation, invariant, regression-generation, equality-saturation, and CEGIS checks.
 - `/slop-formal` runs explicitly enabled SMT expression equivalence or Alive2-compatible LLVM translation validation through exact configured, network-isolated commands.
 - `/slop-retrieve` ranks local graph context without uploading source. `/slop-critics` is an opt-in remote advisory panel whose non-abstaining responses must cite existing deterministic evidence IDs.
-- Core adjudication uses `slop_review`, `slop_findings`, `slop_context`, `slop_intent`, `slop_verdicts`, and atomic `slop_submit_verdicts`. The ledger classifies findings as new, reusable, context-changed, resolved after an adequate complete rescan, or not-observed/out-of-scope. Reuse is guarded by a fingerprint over source plus scanned repository context, providers, evidence, scope, and completeness. Optional provenance, clustering, proposal, experiment, formal, retrieval, and critic tools remain available for explicit workflows. `/slop-verdict-feedback` converts a stored verdict into policy feedback only after explicit human confirmation.
+- Core adjudication uses `slop_review`, `slop_findings`, `slop_context`, `slop_intent`, `slop_verdicts`, and atomic `slop_submit_verdicts`. The ledger classifies findings as new, reusable, context-changed, resolved after an adequate complete rescan, or not-observed/out-of-scope. Reuse is guarded by a fingerprint over source plus scanned repository context, providers, evidence, scope, and completeness. Verdict submission rejects a scan when any scanned file has changed; interrupted full reviews rerun the scan and resume exact-scan checkpoints through `unreviewedOnly`, while `resumePending` can redisplay an in-memory unsubmitted batch after context compaction. Optional provenance, clustering, proposal, experiment, formal, retrieval, and critic tools remain available for explicit workflows. `/slop-verdict-feedback` converts a stored verdict into policy feedback only after explicit human confirmation.
 
 The scanner federates a TypeScript `Program`/`TypeChecker`, an isolated Python stdlib AST helper, explicitly trusted language servers, SARIF 2.1, ESLint/Ruff/Pyright/Knip reports, LCOV/coverage.py reports, and local dependency provenance. It reports:
 
 - unresolved modules
 - simple pass-through wrapper candidates
-- empty or log-only catch clauses
-- catch clauses returning safe-looking fallbacks
+- empty, log-only, or validation-skipping exception handlers
+- catch clauses and quiet post-handler paths returning safe-looking fallbacks
+- complete-scope runtime import-cycle candidates built only from runtime edges
+- Python locals read after assignment under only an `isinstance` guard
+- pass-only test conditions that cannot fail, and unguarded empty delimited fields coerced to numeric zero
+- explicit placeholder-only function bodies, with unsupported-operation and subclass contracts left for adjudication
 
-Python wrapper findings remain observation-only because repository-wide dynamic references are not proven. Python imports guarded by `TYPE_CHECKING`, `ImportError`, or platform conditions are excluded. External analyzer fixes are retained only as evidence.
+Python wrapper findings remain observation-only because repository-wide dynamic references are not proven. Python imports guarded by `TYPE_CHECKING`, `ImportError`, or platform conditions are excluded; PEP 735 dependency groups are treated as declarations. Bare TypeScript imports declared by the nearest workspace package are not reported merely because dependencies are absent from the scanner environment. External analyzer fixes are retained only as evidence.
 
 Optional global configuration lives at `~/.pi/agent/ai-slop/config.json`. A project may provide `.pi/ai-slop.json`, but Pi ignores it until the project is explicitly trusted. Example:
 
@@ -118,6 +122,8 @@ npm run validate
 ```
 
 Generated evaluation and performance evidence is written under `artifacts/`. The evidence library is in `library/`.
+
+Private real-repository corpus work uses an external manifest and separate checkout, fixture, and label directories. `npm run evaluate:repositories:sync` freezes only training and validation repositories at declared commits; `npm run evaluate:repositories` creates bounded source-only fixtures, balanced candidate cases, clean controls, and independent reviewer sheets. Both commands refuse a present holdout checkout during ordinary corpus work. See [`docs/evaluation.md`](docs/evaluation.md); no repository source, label, or private manifest is shipped in the npm package.
 
 ## Documentation
 

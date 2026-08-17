@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createScanResult } from "../src/core/schema.ts";
+import { createScanResult, scanIdFor } from "../src/core/schema.ts";
 import { createFindingQueue, parseVerdictLines, verifyVerdicts } from "../src/report.ts";
-import { classifyVerdicts, recordVerdicts, suggestReportOnlyRules, verdictLedger, verdictManifest, verdictStats, verdictToFeedbackOutcome, writeVerdictManifest, type VerdictStats } from "../src/verdicts.ts";
+import { adjudicationContextFingerprint, classifyVerdicts, formatVerdictDelta, recordVerdicts, suggestReportOnlyRules, verdictLedger, verdictManifest, verdictStats, verdictToFeedbackOutcome, writeVerdictManifest, type VerdictStats } from "../src/verdicts.ts";
 import { readFileSync } from "node:fs";
 import type { FindingDraft } from "../src/types.ts";
 
@@ -82,6 +82,19 @@ test("unchanged finding source is invalidated when caller context changes", () =
   const second = resultWith(root, [draft()], "repository", ["input.ts", "caller.ts"]);
   assert.equal(first.findings[0].sourceHash, second.findings[0].sourceHash);
   assert.equal(classifyVerdicts(root, second, verdictLedger(root, stateRoot)).findings[0].classification.status, "context-changed");
+});
+
+test("scan and adjudication identities ignore provider timing jitter", () => {
+  const root = fixture();
+  const first = resultWith(root, [draft()]);
+  const second = resultWith(root, [draft()]);
+  first.providers[0]!.durationMs = 1;
+  second.providers[0]!.durationMs = 999;
+  assert.equal(scanIdFor(first), scanIdFor(second));
+  assert.equal(
+    adjudicationContextFingerprint(root, first, first.findings[0]!),
+    adjudicationContextFingerprint(root, second, second.findings[0]!),
+  );
 });
 
 test("verdict verification catches unknown IDs, mismatches, and count drift", () => {
@@ -170,6 +183,53 @@ test("verdict recording replaces prior verdicts per finding and rejects bad inpu
     () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", rationale: "cited", evidenceIds: ["evidence:unknown"] }], stateRoot),
     /references unknown evidence/,
   );
+  assert.throws(
+    () => recordVerdicts(root, result, [
+      { findingId: finding.id, verdict: "confirmed", evidence: "first" },
+      { findingId: finding.id, verdict: "dismissed", evidence: "second" },
+    ], stateRoot),
+    /duplicate finding IDs/,
+  );
+  assert.throws(
+    () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "x".repeat(2_001) }], stateRoot),
+    /rationale exceeds 2000 characters/,
+  );
+  assert.throws(
+    () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: " ".repeat(2_001) }], stateRoot),
+    /rationale exceeds 2000 characters/,
+  );
+  assert.throws(
+    () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "reviewed", evidenceIds: Array(51).fill(finding.evidenceIds[0]) }], stateRoot),
+    /exceeds 50 evidence IDs/,
+  );
+  recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "safe\nforged heading\u0000" }], stateRoot);
+  assert.equal(verdictLedger(root, stateRoot)[0].evidence, "safe forged heading");
+});
+
+test("verdict rendering normalizes legacy multiline rationale", () => {
+  const root = fixture();
+  const result = resultWith(root, [draft()]);
+  const finding = result.findings[0];
+  const record = {
+    schemaVersion: result.schemaVersion, findingId: finding.id, ruleId: finding.ruleId, filePath: finding.filePath,
+    line: finding.line, anchor: finding.anchor, sourceHash: finding.sourceHash,
+    adjudicationContextFingerprint: adjudicationContextFingerprint(root, result, finding), scanScope: result.scope, verdict: "confirmed" as const,
+    evidence: "first line\n## forged section\u0000", evidenceIds: [], scanId: "scan:old",
+    createdAt: new Date().toISOString(), repositoryId: "repository:test",
+  };
+  const delta = classifyVerdicts(root, result, [record]);
+  assert.doesNotMatch(formatVerdictDelta(delta), /\n## forged/);
+  assert.doesNotMatch(verdictManifest(result, delta).adjudicated[0]?.evidence ?? "", /[\n\u0000]/);
+});
+
+test("verdict recording enforces the checkpoint batch bound", () => {
+  const root = fixture();
+  const findings = Array.from({ length: 21 }, (_, index) => draft({ anchor: `item-${index}`, line: index + 1 }));
+  const result = resultWith(root, findings);
+  assert.throws(() => recordVerdicts(root, result, result.findings.map((finding) => ({
+    findingId: finding.id, verdict: "confirmed" as const, evidence: "reviewed",
+  })), path.join(root, "state")), /1 to 20 entries/);
+  assert.throws(() => recordVerdicts(root, result, [null as never], path.join(root, "state")), /findingId must be/);
 });
 
 test("verdict outcomes map to conservative feedback outcomes", () => {
@@ -253,6 +313,17 @@ test("verdict manifest serializes the delta and writes atomically", () => {
   assert.equal(parsed.adjudicated[0].findingId, finding.id);
 });
 
+test("verdict manifest rejects traversal and symlink escapes", () => {
+  const root = fixture();
+  const outside = mkdtempSync(path.join(tmpdir(), "ai-slop-verdicts-outside-"));
+  const result = resultWith(root, [draft()]);
+  const delta = classifyVerdicts(root, result, []);
+  assert.throws(() => writeVerdictManifest(root, result, delta, path.join("..", "escaped.json")), /outside the project root/);
+  mkdirSync(path.join(root, "reports"));
+  symlinkSync(outside, path.join(root, "reports", "linked"));
+  assert.throws(() => writeVerdictManifest(root, result, delta, path.join("reports", "linked", "escaped.json")), /outside the project root/);
+});
+
 test("finding queues omit report-only families by default and note the omission", () => {
   const root = fixture();
   const result = resultWith(root, [
@@ -272,4 +343,13 @@ test("finding queues omit report-only families by default and note the omission"
 
   const representatives = createFindingQueue(result, { representatives: true, reportOnly: ["assurance.no-linked-tests"] });
   assert.equal(representatives.queueSize, 1);
+  const nonFinite = createFindingQueue(result, { offset: Number.NaN, limit: Number.POSITIVE_INFINITY });
+  assert.equal(nonFinite.offset, 0);
+  assert.equal(nonFinite.findings.length, 2);
+
+  const resumed = createFindingQueue(result, { excludeFindingIds: new Set([full.findings[0]!.finding.id]) });
+  assert.equal(resumed.totalFindings, 2);
+  assert.equal(resumed.queueSize, 1);
+  assert.equal(resumed.alreadyAdjudicated, 1);
+  assert.match(resumed.text, /1 already adjudicated for this scan/);
 });

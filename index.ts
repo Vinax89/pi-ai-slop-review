@@ -16,7 +16,7 @@ import { rankFindings, weightedSeverity } from "./src/core/severity.ts";
 import { AssuranceLedger, diffScans, type ScanDelta, type VerificationStatus } from "./src/core/ledger.ts";
 import { StateStore } from "./src/core/store.ts";
 import { diagnose, formatDiagnostics } from "./src/diagnostics.ts";
-import { fingerprint } from "./src/core/schema.ts";
+import { currentScanContentHash, fingerprint } from "./src/core/schema.ts";
 import { runIndependentCritics } from "./src/experiments/critics.ts";
 import { runExpressionExperiment } from "./src/experiments/expression.ts";
 import { runSmtEquivalence, runTranslationValidation } from "./src/experiments/formal.ts";
@@ -236,7 +236,23 @@ export default async function (pi: any): Promise<void> {
   let trustedProject = false;
   let legacyTouchedPaths = new Set<string>();
   let lastOutcome: ReviewOutcome | undefined;
-  const pendingAdjudication = new Map<string, Set<string>>();
+  const pendingAdjudication = new Map<string, {
+    ids: Set<string>;
+    queueSize: number;
+    representatives: boolean;
+    reportOnlyOmitted: number;
+    alreadyAdjudicated: number;
+  }>();
+
+  const requireCurrentScan = (ctx: any): ScanResult => {
+    ensureInitialized(ctx);
+    if (!lastOutcome) throw new Error("Run slop_review before requesting adjudication");
+    if (currentScanContentHash(ctx.cwd, lastOutcome.result.scannedFiles) !== lastOutcome.result.scope.contentHash) {
+      pendingAdjudication.delete(lastOutcome.result.scanId);
+      throw new Error("the latest slop_review scan is stale because scanned source changed; run slop_review again");
+    }
+    return lastOutcome.result;
+  };
 
   const initialize = (ctx: any): void => {
     trustedProject = Boolean(ctx.isProjectTrusted?.());
@@ -950,6 +966,7 @@ export default async function (pi: any): Promise<void> {
       if (deltaSinceAudit) outcome.warnings.push("repository delta audit scoped to files changed since the last audit baseline (mtime-based)");
       else if (deltaScope) outcome.warnings.push("repository delta audit scoped to files changed since git HEAD");
       if (discoveryTruncated) outcome.warnings.push(`repository discovery stopped at ${loadedConfig!.config.limits.maxFiles} files; result completeness is partial`);
+      pendingAdjudication.clear();
       lastOutcome = outcome;
       ctx.ui.setStatus("ai-slop", `${outcome.result.findings.length} findings · ${outcome.delta.added.length} new`);
       return { content: [{ type: "text", text: reviewText(outcome, 75) }], details: outcome };
@@ -986,11 +1003,15 @@ export default async function (pi: any): Promise<void> {
       limit: Type.Optional(Type.Number({ description: "Page size from 1 to 20" })),
       representatives: Type.Optional(Type.Boolean({ description: "Return only the highest-ranked finding from each rule family" })),
       includeReportOnly: Type.Optional(Type.Boolean({ description: "Include report-only families (assurance.no-linked-tests) that are omitted by default" })),
+      unreviewedOnly: Type.Optional(Type.Boolean({ description: "Exclude findings already persisted for this exact scan; use after interruption with offset 0" })),
+      resumePending: Type.Optional(Type.Boolean({ description: "Return the current unsubmitted batch again without replacing it" })),
     }),
     async execute(
       _toolCallId: string,
-      params: { findingId?: string; findingIds?: string[]; offset?: number; limit?: number; representatives?: boolean; includeReportOnly?: boolean },
+      params: { findingId?: string; findingIds?: string[]; offset?: number; limit?: number; representatives?: boolean; includeReportOnly?: boolean; unreviewedOnly?: boolean; resumePending?: boolean },
       signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: any,
     ) {
       if (signal?.aborted) throw new Error("AI-slop finding retrieval cancelled");
       if (!lastOutcome) throw new Error("Run slop_review before requesting findings");
@@ -998,21 +1019,49 @@ export default async function (pi: any): Promise<void> {
         const finding = findingByPrefix(params.findingId);
         return { content: [{ type: "text", text: findingDetails(finding) }], details: finding };
       }
+      const current = requireCurrentScan(ctx);
+      if (params.unreviewedOnly && params.offset !== undefined && params.offset !== 0) {
+        throw new Error("use offset 0 with unreviewedOnly because the remaining queue is already compacted");
+      }
+      const pending = pendingAdjudication.get(current.scanId);
+      if (params.resumePending) {
+        if (!pending?.ids.size) throw new Error("no pending slop_findings batch exists for this scan");
+        const findings = [...pending.ids].map((id) => findingByPrefix(id));
+        return {
+          content: [{ type: "text", text: `PENDING ADJUDICATION BATCH\n${findings.map((finding) => findingDetails(finding)).join("\n\n")}` }],
+          details: { findings, resumed: true },
+        };
+      }
       if (params.findingIds?.length) {
+        if (pendingAdjudication.get(lastOutcome.result.scanId)?.ids.size) throw new Error("submit the pending slop_findings batch before requesting another batch");
         const ids = [...new Set(params.findingIds)];
         if (ids.length > 20) throw new Error("request at most 20 finding IDs at once");
         const findings = ids.map((id) => findingByPrefix(id));
-        pendingAdjudication.set(lastOutcome.result.scanId, new Set(findings.map((finding) => finding.id)));
+        pendingAdjudication.set(lastOutcome.result.scanId, {
+          ids: new Set(findings.map((finding) => finding.id)), queueSize: findings.length, representatives: false, reportOnlyOmitted: 0, alreadyAdjudicated: 0,
+        });
         return {
           content: [{ type: "text", text: findings.map((finding) => findingDetails(finding)).join("\n\n") }],
           details: { findings },
         };
       }
+      if (pendingAdjudication.get(lastOutcome.result.scanId)?.ids.size) throw new Error("submit the pending slop_findings batch before requesting another batch");
       const page = createFindingQueue(lastOutcome.result, {
         ...params,
         reportOnly: params.includeReportOnly ? [] : loadedConfig!.config.rules.reportOnly,
+        excludeFindingIds: params.unreviewedOnly
+          ? new Set(verdictLedger(ctx.cwd).filter((record) => record.scanId === current.scanId).map((record) => record.findingId))
+          : undefined,
       });
-      pendingAdjudication.set(lastOutcome.result.scanId, new Set(page.findings.map((item) => item.finding.id)));
+      if (page.findings.length) {
+        pendingAdjudication.set(lastOutcome.result.scanId, {
+          ids: new Set(page.findings.map((item) => item.finding.id)),
+          queueSize: page.queueSize,
+          representatives: page.representatives,
+          reportOnlyOmitted: page.reportOnlyOmitted,
+          alreadyAdjudicated: page.alreadyAdjudicated,
+        });
+      }
       return {
         content: [{ type: "text", text: page.text }],
         details: page,
@@ -1095,32 +1144,49 @@ export default async function (pi: any): Promise<void> {
       scanId: Type.String({ description: "Exact scan ID from slop_review" }),
       entries: Type.Array(Type.Object({
         findingId: Type.String({ description: "Exact finding ID from the current slop_findings batch" }),
-        verdict: Type.String({ description: "confirmed, dismissed, or needs-context" }),
+        verdict: Type.Union([Type.Literal("confirmed"), Type.Literal("dismissed"), Type.Literal("needs-context")], {
+          description: "One closed adjudication verdict",
+        }),
         evidenceIds: Type.Optional(Type.Array(Type.String(), { maxItems: 50 })),
-        rationale: Type.String({ description: "Concrete source, caller, contract, test, or missing-context rationale" }),
+        rationale: Type.String({ description: "Concrete source, caller, contract, test, or missing-context rationale (1–2,000 characters; enforced transactionally)" }),
       }), { maxItems: 20 }),
     }),
     async execute(_toolCallId: string, params: { scanId: string; entries: VerdictEntry[] }, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {
       ensureInitialized(ctx);
       if (signal?.aborted) throw new Error("verdict submission cancelled");
+      requireCurrentScan(ctx);
       if (!lastOutcome || params.scanId !== lastOutcome.result.scanId) throw new Error("scanId is not the latest slop_review scan");
       const expected = pendingAdjudication.get(params.scanId);
-      if (!expected?.size) throw new Error("no pending slop_findings batch exists for this scan");
+      if (!expected?.ids.size) throw new Error("no pending slop_findings batch exists for this scan");
       const submitted = params.entries.map((entry) => entry.findingId);
       if (new Set(submitted).size !== submitted.length) throw new Error("duplicate findingId in verdict batch");
-      const missing = [...expected].filter((id) => !submitted.includes(id));
-      const unexpected = submitted.filter((id) => !expected.has(id));
+      const missing = [...expected.ids].filter((id) => !submitted.includes(id));
+      const unexpected = submitted.filter((id) => !expected.ids.has(id));
       if (missing.length || unexpected.length) throw new Error(`verdict batch does not match expected adjudication set; missing=[${missing.join(", ")}], unexpected=[${unexpected.join(", ")}]`);
       const count = recordVerdicts(ctx.cwd, lastOutcome.result, params.entries);
       pendingAdjudication.delete(params.scanId);
       const records = verdictLedger(ctx.cwd).filter((record) => record.scanId === params.scanId);
+      const recordsById = new Map(records.map((record) => [record.findingId, record]));
       const byId = new Map(lastOutcome.result.findings.map((finding) => [finding.id, finding]));
       const lines = params.entries.map((entry) => {
         const finding = byId.get(entry.findingId)!;
-        return `- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — ${entry.verdict}\n  ${entry.rationale}`;
+        const record = recordsById.get(finding.id)!;
+        return `- ${finding.id} | ${finding.ruleId} | ${finding.filePath}:${finding.line} — ${record.verdict}\n  ${record.evidence}`;
       });
-      const text = [`VERDICT BATCH COMMITTED (${count} updated)`, ...lines, `Coverage checkpoint: ${records.length}/${lastOutcome.result.findings.length} static candidates persisted for scan ${params.scanId}`].join("\n");
-      return { content: [{ type: "text", text }], details: { count, adjudicated: records.length, candidates: lastOutcome.result.findings.length, scanId: params.scanId } };
+      const batchCoverage = expected.representatives
+        ? `Batch coverage: ${params.entries.length}/${expected.queueSize} rule-family representatives (of ${lastOutcome.result.findings.length} static candidates)`
+        : `Batch coverage: ${params.entries.length}/${expected.queueSize} eligible queued candidates`;
+      const omitted = expected.reportOnlyOmitted ? `; ${expected.reportOnlyOmitted} report-only candidate(s) omitted` : "";
+      const text = [
+        `VERDICT BATCH COMMITTED (${count} updated)`, ...lines, `${batchCoverage}${omitted}`,
+        `Coverage checkpoint: ${records.length}/${lastOutcome.result.findings.length} static candidates persisted for scan ${params.scanId}`,
+      ].join("\n");
+      return { content: [{ type: "text", text }], details: {
+        count, adjudicated: records.length, candidates: lastOutcome.result.findings.length, scanId: params.scanId,
+        batchAdjudicated: params.entries.length, queueSize: expected.queueSize,
+        representatives: expected.representatives, reportOnlyOmitted: expected.reportOnlyOmitted,
+        alreadyAdjudicated: expected.alreadyAdjudicated,
+      } };
     },
     renderCall(_args: unknown, theme: { fg(color: string, text: string): string; bold(text: string): string }) {
       return new Text(theme.fg("toolTitle", theme.bold("slop_submit_verdicts ")), 0, 0);

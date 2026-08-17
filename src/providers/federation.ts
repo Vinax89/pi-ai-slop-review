@@ -1,7 +1,7 @@
 import { assessScanCompleteness } from "../core/completeness.ts";
 import { resourceBudgetDiagnostic, type ResourceBudget } from "../core/budget.ts";
 import { DEFAULT_CONFIG, type AiSlopConfig } from "../core/config.ts";
-import { canonicalJson, createScanResult, fingerprint, mergeScanResults, sha256 } from "../core/schema.ts";
+import { canonicalJson, createScanResult, fingerprint, mergeScanResults, providerRunsForIdentity, sha256 } from "../core/schema.ts";
 import { rankFindings } from "../core/severity.ts";
 import { collectGraphEvidence } from "../graph/provider.ts";
 import { applyPolicy } from "../policy/engine.ts";
@@ -181,7 +181,7 @@ export async function federateEvidence(
   merged.scanId = fingerprint("scan", {
     contentHash: merged.scope.contentHash,
     findings: merged.findings.map((finding) => finding.id),
-    providers: merged.providers,
+    providers: providerRunsForIdentity(merged.providers),
   });
   const reviewed = applyPolicy(rootDir, merged, config, options.policyStateRoot);
   if (reviewed.findings.length > config.limits.maxFindings) {

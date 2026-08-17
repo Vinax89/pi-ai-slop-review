@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -36,6 +36,43 @@ test("uses TypeScript resolution and ignores Node builtins", () => {
   assert.equal(unresolved.length, 1);
   assert.match(unresolved[0].message, /not-a-real-package/);
   assert.equal(unresolved[0].confidence, "C3");
+});
+
+test("treats dependencies declared by the nearest workspace package as resolvable", () => {
+  const root = project({
+    "frontend/package.json": JSON.stringify({
+      dependencies: { react: "^19.0.0" },
+      devDependencies: { "@testing-library/react": "^16.0.0" },
+      peerDependencies: { next: "^15.0.0" },
+      optionalDependencies: { sonner: "^2.0.0" },
+    }),
+    "frontend/src/input.ts": [
+      "import React from 'react';",
+      "import Next from 'next/navigation';",
+      "import { toast } from 'sonner';",
+      "import { render } from '@testing-library/react';",
+      "import missing from 'not-declared-anywhere';",
+      "void React; void Next; void toast; void render; void missing;",
+    ].join("\n"),
+  });
+  const unresolved = scanTypeScriptFiles(root, ["frontend/src/input.ts"]).findings.filter(
+    (finding) => finding.ruleId === "dependency.unresolved",
+  );
+  assert.equal(unresolved.length, 1);
+  assert.match(unresolved[0]?.message ?? "", /not-declared-anywhere/);
+});
+
+test("does not trust a package manifest symlink that escapes the scan root", () => {
+  const root = project({ "input.ts": "import value from 'outside-only';\nvoid value;\n" });
+  const external = mkdtempSync(path.join(tmpdir(), "pi-ai-slop-external-manifest-"));
+  const externalManifest = path.join(external, "package.json");
+  writeFileSync(externalManifest, JSON.stringify({ dependencies: { "outside-only": "1.0.0" } }));
+  symlinkSync(externalManifest, path.join(root, "package.json"));
+  const unresolved = scanTypeScriptFiles(root, ["input.ts"]).findings.filter(
+    (finding) => finding.ruleId === "dependency.unresolved",
+  );
+  assert.equal(unresolved.length, 1);
+  assert.match(unresolved[0]?.message ?? "", /outside-only/);
 });
 
 test("honors tsconfig path aliases", () => {
@@ -119,6 +156,76 @@ test("distinguishes suppressed errors, hidden fallbacks, and rethrows", () => {
   const findings = scanTypeScriptFiles(root, ["input.ts"]).findings;
   assert.equal(findings.filter((finding) => finding.ruleId === "errors.suppressed").length, 2);
   assert.equal(findings.filter((finding) => finding.ruleId === "data.hidden-catch-fallback").length, 1);
+});
+
+test("detects empty delimited fields coerced to zero while respecting explicit guards", () => {
+  const root = project({
+    "input.js": [
+      ".pragma library",
+      "export function parseCoords(raw) {",
+      "  const parts = String(raw || '').trim().split(',');",
+      "  if (parts.length !== 2) return null;",
+      "  const latitude = Number(parts[0].trim());",
+      "  const longitude = Number(parts[1].trim());",
+      "  return { latitude, longitude };",
+      "}",
+      "export function parseGuarded(raw) {",
+      "  const parts = String(raw || '').trim().split(',');",
+      "  if (parts.length !== 2) return null;",
+      "  if (!parts[0].trim() || !parts[1].trim()) return null;",
+      "  return { latitude: Number(parts[0].trim()), longitude: Number(parts[1].trim()) };",
+      "}",
+      "export function parseNonDominating(raw, enabled) {",
+      "  const parts = String(raw || '').trim().split(',');",
+      "  if (enabled && !parts[0].trim()) return null;",
+      "  return Number(parts[0].trim());",
+      "}",
+    ].join("\n"),
+  });
+  const findings = scanTypeScriptFiles(root, ["input.js"]).findings.filter(
+    (finding) => finding.ruleId === "correctness.empty-numeric-field-coercion",
+  );
+  assert.equal(findings.length, 2);
+  assert.match(findings[0]?.message ?? "", /empty delimited field/);
+});
+
+test("reports explicit placeholder-only bodies without treating ordinary throws or declarations as stubs", () => {
+  const root = project({
+    "input.ts": [
+      "export function pending() { throw new Error('Not implemented yet'); }",
+      "export const later = () => { throw new Error('TODO placeholder'); };",
+      "export const typed = () => { throw new TypeError('NotImplemented'); };",
+      "class RangeError {}",
+      "export const shadowed = () => { throw new RangeError('Not implemented'); };",
+      "export function rejected() { throw new Error('Invalid input'); }",
+      "export declare function external(): void;",
+      "abstract class Base { abstract execute(): void; }",
+    ].join("\n"),
+  });
+  const placeholders = scanTypeScriptFiles(root, ["input.ts"]).findings.filter(
+    (finding) => finding.ruleId === "structure.explicit-placeholder",
+  );
+  assert.equal(placeholders.length, 3);
+  assert.match(placeholders[0].message, /pending/);
+  assert.match(placeholders[1].message, /later/);
+  assert.match(placeholders[2].message, /typed/);
+  assert.doesNotMatch(placeholders.map((finding) => finding.message).join(" "), /shadowed/);
+  assert.equal(placeholders[0].maximumAction, "observe");
+  assert.match(placeholders[0].unknown.join(" "), /unsupported-operation|subclass/);
+});
+
+test("bounds and sanitizes source-controlled placeholder names", () => {
+  const hostileName = `forged\\n${"x".repeat(300)}`;
+  const root = project({
+    "input.ts": `export const handlers = { "${hostileName}": () => { throw new Error('Not implemented'); } };\n`,
+  });
+  const placeholder = scanTypeScriptFiles(root, ["input.ts"]).findings.find(
+    (finding) => finding.ruleId === "structure.explicit-placeholder",
+  );
+  assert.ok(placeholder);
+  assert.equal(/[\n\r\u0000-\u001f\u007f]/.test(placeholder.message), false);
+  assert.ok(placeholder.message.length < 190);
+  assert.match(placeholder.message, /…/);
 });
 
 test("skips generated and syntactically invalid files", () => {

@@ -29,6 +29,7 @@ const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 const completionAudit = readFileSync(new URL("../artifacts/completion-audit.md", import.meta.url), "utf8");
 const verdictAcceptance = readFileSync(new URL("../artifacts/verdict-acceptance.md", import.meta.url), "utf8");
 const skill = readFileSync(new URL("../skills/ai-slop-review/SKILL.md", import.meta.url), "utf8");
+const extensionSource = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 const version = packageJson.version;
 if (shrinkwrap.version !== version) fail(`npm-shrinkwrap.json version ${shrinkwrap.version} != package.json ${version}`);
 if (shrinkwrap.packages?.[""]?.version !== version) fail(`shrinkwrap root package version ${shrinkwrap.packages?.[""]?.version} != package.json ${version}`);
@@ -39,24 +40,35 @@ const requiredReviewTools = ["slop_review", "slop_findings", "slop_context", "sl
 for (const tool of requiredReviewTools) {
   if (!skill.includes(`\`${tool}\``)) fail(`skill is missing required tool ${tool}`);
   if (!verdictAcceptance.includes(tool)) fail(`verdict acceptance reproduction command is missing ${tool}`);
+  if (!extensionSource.includes(`name: "${tool}"`)) fail(`extension does not register required tool ${tool}`);
 }
 for (const retired of ["slop_record_verdicts", "slop_verify_verdicts"]) {
   if (skill.includes(`\`${retired}\``)) fail(`skill still requires retired tool ${retired}`);
 }
+for (const recoveryOption of ["resumePending", "unreviewedOnly"]) {
+  if (!skill.includes(`\`${recoveryOption}`)) fail(`skill is missing checkpoint recovery option ${recoveryOption}`);
+  if (!extensionSource.includes(recoveryOption)) fail(`extension is missing checkpoint recovery option ${recoveryOption}`);
+}
+if (!readme.includes("disabled by default")) fail("README must state that slop_intent forensics are disabled by default");
 console.log(`version: ${version} (package.json, shrinkwrap, README tag consistent)`);
 
 // 3. Full validation gate (typecheck + compile + tests + evaluation + audit).
 execFileSync("npm", ["run", "validate"], { stdio: "inherit" });
 
-// 4. Pack contents: required runtime files present, verdict fixtures excluded.
+// 4. Performance and containment gate.
+execFileSync("npm", ["run", "benchmark"], { stdio: "inherit" });
+
+// 5. Pack contents: required runtime files present, verdict fixtures excluded.
 const packJson = JSON.parse(execFileSync("npm", ["pack", "--ignore-scripts", "--dry-run", "--json"], { encoding: "utf8" }));
 const pack = Array.isArray(packJson) ? packJson[0] : Object.values(packJson)[0];
 const packedPaths = pack.files.map((file) => file.path);
-const required = ["skills/ai-slop-review/SKILL.md", "dist/src/verdicts.js", "dist/src/isolated-scan.js", "index.ts"];
+const required = ["skills/ai-slop-review/SKILL.md", "dist/src/verdicts.js", "dist/src/isolated-scan.js", "dist/src/evaluation/repository-corpus.js", "schema/repository-corpus-manifest.schema.json", "index.ts"];
 for (const file of required) {
   if (!packedPaths.includes(file)) fail(`packed package is missing ${file}`);
 }
 if (packedPaths.some((file) => file.startsWith("artifacts/verdict-corpus"))) fail("packed package must not contain artifacts/verdict-corpus fixtures");
+if (packedPaths.some((file) => file.startsWith("evaluation-private/"))) fail("packed package must not contain private verdict labels");
+if (packedPaths.some((file) => /(?:repository-manifest\.json|reviewer-[ab]\.json|repository-index\.json|\/fixtures\/)/.test(file))) fail("packed package must not contain private repository corpus inputs or labels");
 console.log(`pack: ${pack.files.length} files, ${pack.unpackedSize} bytes unpacked, contents verified`);
 
 console.log("release-check passed — publish with `npm publish` (interactive; OTP/browser auth may be required).");

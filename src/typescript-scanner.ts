@@ -100,6 +100,12 @@ function findProjectConfig(root: string, filePath: string): string | undefined {
   return undefined;
 }
 
+function preprocessTypeScriptSource(filePath: string, text: string): string {
+  if (path.extname(filePath).toLowerCase() !== ".js") return text;
+  return text.replace(/^([\t ]*)\.pragma[\t ]+library[\t ]*(?:\r?\n|$)/, (directive) =>
+    directive.replace(/[^\r\n]/g, " "));
+}
+
 function createProject(files: string[], configPath?: string, previousProjects: TypeScriptProjectContext[] = []): Project {
   let options: ts.CompilerOptions;
   let rootNames: string[];
@@ -135,7 +141,13 @@ function createProject(files: string[], configPath?: string, previousProjects: T
     project.rootNames.every((file, index) => file === rootNames[index]) &&
     JSON.stringify(project.options) === JSON.stringify(options)
   );
-  const program = ts.createProgram({ rootNames, options, oldProgram: previous?.program });
+  const host = ts.createCompilerHost(options);
+  const readFile = host.readFile.bind(host);
+  host.readFile = (fileName) => {
+    const text = readFile(fileName);
+    return text === undefined ? undefined : preprocessTypeScriptSource(fileName, text);
+  };
+  const program = ts.createProgram({ rootNames, options, oldProgram: previous?.program, host });
   return {
     files,
     rootNames,
@@ -189,6 +201,54 @@ function isGenerated(filePath: string, text: string): boolean {
     return true;
   }
   return /(?:@generated|generated file|do not edit)/i.test(text.slice(0, 500));
+}
+
+function externalPackageName(specifier: string): string | undefined {
+  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("#")) return undefined;
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? (parts.length >= 2 ? `${parts[0]}/${parts[1]}` : undefined) : parts[0];
+}
+
+function isDeclaredWorkspacePackage(
+  root: string,
+  filePath: string,
+  specifier: string,
+  manifests: Map<string, Set<string> | null>,
+): boolean {
+  const packageName = externalPackageName(specifier);
+  if (!packageName) return false;
+  let directory = path.dirname(filePath);
+  while (isInside(root, directory)) {
+    const manifestPath = path.join(directory, "package.json");
+    if (existsSync(manifestPath)) {
+      let declared = manifests.get(manifestPath);
+      if (declared === undefined) {
+        try {
+          const realManifestPath = realpathSync(manifestPath);
+          if (!isInside(root, realManifestPath)) throw new Error("package manifest resolves outside the scan root");
+          const document = JSON.parse(readFileSync(realManifestPath, "utf8")) as Record<string, unknown>;
+          declared = new Set<string>();
+          if (typeof document.name === "string") declared.add(document.name);
+          for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+            const entries = document[field];
+            if (entries && typeof entries === "object" && !Array.isArray(entries)) {
+              for (const name of Object.keys(entries)) declared.add(name);
+            }
+          }
+          manifests.set(manifestPath, declared);
+        } catch {
+          declared = null;
+          manifests.set(manifestPath, null);
+        }
+      }
+      if (declared?.has(packageName)) return true;
+    }
+    if (directory === root) break;
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return false;
 }
 
 function isExported(checker: ts.TypeChecker, sourceFile: ts.SourceFile, name: ts.Identifier, node: ts.Node): boolean {
@@ -453,7 +513,200 @@ function scanCatchClauses(sourceFile: ts.SourceFile, sourceHash: string, root: s
   return findings;
 }
 
-function scanImports(project: Project, sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
+type SplitField = { identifier: ts.Identifier; index: string };
+
+function splitElementTrim(expression: ts.Expression): SplitField | undefined {
+  if (
+    !ts.isCallExpression(expression) ||
+    expression.arguments.length !== 0 ||
+    !ts.isPropertyAccessExpression(expression.expression) ||
+    expression.expression.name.text !== "trim" ||
+    !ts.isElementAccessExpression(expression.expression.expression) ||
+    !ts.isIdentifier(expression.expression.expression.expression) ||
+    !expression.expression.expression.argumentExpression
+  ) return undefined;
+  return {
+    identifier: expression.expression.expression.expression,
+    index: expression.expression.expression.argumentExpression.getText(),
+  };
+}
+
+function terminates(statement: ts.Statement): boolean {
+  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+  return ts.isBlock(statement) && statement.statements.length > 0 && terminates(statement.statements[statement.statements.length - 1]!);
+}
+
+function sameBinding(checker: ts.TypeChecker, left: ts.Identifier, right: ts.Identifier): boolean {
+  const leftSymbol = checker.getSymbolAtLocation(left);
+  const rightSymbol = checker.getSymbolAtLocation(right);
+  return leftSymbol && rightSymbol ? leftSymbol === rightSymbol : left.text === right.text;
+}
+
+function rejectsEmptyField(checker: ts.TypeChecker, expression: ts.Expression, target: SplitField): boolean {
+  if (ts.isParenthesizedExpression(expression)) return rejectsEmptyField(checker, expression.expression, target);
+  if (ts.isPrefixUnaryExpression(expression) && expression.operator === ts.SyntaxKind.ExclamationToken) {
+    const field = splitElementTrim(expression.operand);
+    return Boolean(field && field.index === target.index && sameBinding(checker, field.identifier, target.identifier));
+  }
+  return ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.BarBarToken && (
+    rejectsEmptyField(checker, expression.left, target) || rejectsEmptyField(checker, expression.right, target)
+  );
+}
+
+function hasEmptyFieldGuard(checker: ts.TypeChecker, body: ts.Block, target: SplitField, call: ts.CallExpression): boolean {
+  let cursor: ts.Node = call;
+  while (cursor !== body) {
+    let block: ts.Node | undefined = cursor.parent;
+    while (block && block !== body && !ts.isBlock(block)) block = block.parent;
+    if (!block || !ts.isBlock(block)) return false;
+    let directChild = cursor;
+    while (directChild.parent && directChild.parent !== block) directChild = directChild.parent;
+    for (const statement of block.statements) {
+      if (statement.getStart() >= directChild.getStart()) break;
+      if (
+        ts.isIfStatement(statement) &&
+        terminates(statement.thenStatement) &&
+        rejectsEmptyField(checker, statement.expression, target)
+      ) return true;
+    }
+    if (block === body) break;
+    cursor = block;
+  }
+  return false;
+}
+
+function executableFunctionBlock(node: ts.Node): ts.Block | undefined {
+  if (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  ) return node.body && ts.isBlock(node.body) ? node.body : undefined;
+  return undefined;
+}
+
+function scanEmptyNumericFieldCoercions(project: Project, sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
+  const findings: FindingDraft[] = [];
+  const visit = (node: ts.Node): void => {
+    const body = executableFunctionBlock(node);
+    if (body) {
+      const splitDeclarations: Array<{ identifier: ts.Identifier; position: number }> = [];
+      const numberCalls: Array<{ call: ts.CallExpression; field: SplitField }> = [];
+      const inspect = (child: ts.Node): void => {
+        if (child !== body && ts.isFunctionLike(child)) return;
+        if (
+          ts.isVariableDeclaration(child) &&
+          ts.isIdentifier(child.name) &&
+          child.initializer &&
+          ts.isCallExpression(child.initializer) &&
+          ts.isPropertyAccessExpression(child.initializer.expression) &&
+          child.initializer.expression.name.text === "split" &&
+          child.initializer.arguments.length === 1 &&
+          ts.isStringLiteralLike(child.initializer.arguments[0]!) &&
+          child.initializer.arguments[0]!.text === ","
+        ) splitDeclarations.push({ identifier: child.name, position: child.getStart(sourceFile) });
+        if (
+          ts.isCallExpression(child) &&
+          ts.isIdentifier(child.expression) &&
+          child.expression.text === "Number" &&
+          child.arguments.length === 1
+        ) {
+          const symbol = project.checker.getSymbolAtLocation(child.expression);
+          const globalNumber = !symbol?.declarations?.some((declaration) => !declaration.getSourceFile().isDeclarationFile);
+          const field = splitElementTrim(child.arguments[0]!);
+          if (globalNumber && field) numberCalls.push({ call: child, field });
+        }
+        ts.forEachChild(child, inspect);
+      };
+      inspect(body);
+      const candidate = numberCalls.find(({ call, field }) =>
+        splitDeclarations.some(({ identifier, position }) =>
+          position < call.getStart(sourceFile) && sameBinding(project.checker, identifier, field.identifier)
+        ) && !hasEmptyFieldGuard(project.checker, body, field, call));
+      if (candidate) {
+        findings.push(finding(sourceFile, sourceHash, root, candidate.call, {
+          anchor: structuralAnchor(candidate.call, "empty-number-coercion"),
+          ruleId: "correctness.empty-numeric-field-coercion",
+          classification: "defect",
+          confidence: "C2",
+          risk: "R2",
+          maximumAction: "observe",
+          message: "Number conversion turns an empty delimited field into zero without an explicit empty-field guard",
+          evidence: ["AST links a comma-split field through trim() directly into the global Number constructor"],
+          counterEvidence: [],
+          unknown: ["whether the parser contract intentionally treats an empty field as numeric zero"],
+        }));
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return findings;
+}
+
+function scanExplicitPlaceholders(project: Project, sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
+  const findings: FindingDraft[] = [];
+  const safeLabel = (value: string, maxLength = 120): string => {
+    const printable = value.replace(/[\u0000-\u001f\u007f]/g, "?");
+    return printable.length <= maxLength ? printable : `${printable.slice(0, maxLength - 1)}…`;
+  };
+  const displayName = (node: ts.FunctionLikeDeclaration): string => {
+    if (node.name && ts.isIdentifier(node.name)) return safeLabel(node.name.text);
+    if (ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) return safeLabel(node.parent.name.text);
+    if (ts.isPropertyAssignment(node.parent) && (ts.isIdentifier(node.parent.name) || ts.isStringLiteralLike(node.parent.name))) return safeLabel(node.parent.name.text);
+    return "anonymous function";
+  };
+  const visit = (node: ts.Node): void => {
+    const functionNode = ts.isFunctionLike(node) ? node as ts.FunctionLikeDeclaration : undefined;
+    const body = functionNode?.body;
+    if (body && ts.isBlock(body) && body.statements.length === 1) {
+      const statement = body.statements[0];
+      const expression = ts.isThrowStatement(statement) ? statement.expression : undefined;
+      const errorConstructor = expression && ts.isNewExpression(expression) && ts.isIdentifier(expression.expression)
+        ? expression.expression.text
+        : undefined;
+      const constructorIdentifier = expression && ts.isNewExpression(expression) && ts.isIdentifier(expression.expression)
+        ? expression.expression
+        : undefined;
+      const constructorSymbol = constructorIdentifier ? project.checker.getSymbolAtLocation(constructorIdentifier) : undefined;
+      const standardConstructor = errorConstructor && ["Error", "TypeError", "RangeError"].includes(errorConstructor) &&
+        constructorSymbol?.declarations?.some((declaration) => project.program.isSourceFileDefaultLibrary(declaration.getSourceFile())) &&
+        constructorSymbol.declarations.every((declaration) => project.program.isSourceFileDefaultLibrary(declaration.getSourceFile()));
+      const message = expression && ts.isNewExpression(expression) && standardConstructor
+        ? expression.arguments?.[0]
+        : undefined;
+      if (message && ts.isStringLiteralLike(message) && /\b(?:not[ -]?implemented|todo|placeholder)\b/i.test(message.text)) {
+        const name = displayName(functionNode!);
+        findings.push(finding(sourceFile, sourceHash, root, statement, {
+          anchor: structuralAnchor(node, "explicit-placeholder"),
+          ruleId: "structure.explicit-placeholder",
+          classification: "context_conflict",
+          confidence: "C2",
+          risk: "R2",
+          maximumAction: "observe",
+          message: `Function '${name}' has an explicit placeholder-only implementation`,
+          evidence: ["AST confirms the entire function body is a throw with an explicit placeholder marker"],
+          counterEvidence: [],
+          unknown: ["the placeholder may be an intentional unsupported-operation or subclass contract"],
+        }));
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return findings;
+}
+
+function scanImports(
+  project: Project,
+  sourceFile: ts.SourceFile,
+  sourceHash: string,
+  root: string,
+  manifests: Map<string, Set<string> | null>,
+): FindingDraft[] {
   const findings: FindingDraft[] = [];
   const semanticDiagnostics = project.program.getSemanticDiagnostics(sourceFile);
   const visit = (node: ts.Node): void => {
@@ -469,7 +722,7 @@ function scanImports(project: Project, sourceFile: ts.SourceFile, sourceHash: st
       const isRuntimeBuiltin = BUILTINS.has(spec) || /^(?:https?|bun|deno):/.test(spec);
       const isExistingRelativeResource = spec.startsWith(".") && existsSync(path.resolve(path.dirname(sourceFile.fileName), spec));
       const symbol = canonicalSymbol(project.checker, project.checker.getSymbolAtLocation(specifier));
-      const resolved = isRuntimeBuiltin || isExistingRelativeResource ||
+      const resolved = isRuntimeBuiltin || isExistingRelativeResource || isDeclaredWorkspacePackage(root, sourceFile.fileName, spec, manifests) ||
         Boolean(ts.resolveModuleName(spec, sourceFile.fileName, project.options, ts.sys).resolvedModule || symbol);
       if (!resolved) {
         const location = nodeLocation(sourceFile, specifier);
@@ -588,6 +841,7 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
   if (retainProjects) projects.push(project);
   const hashes = new Map<string, string>();
   const validFiles = new Set<string>();
+  const manifests = new Map<string, Set<string> | null>();
 
   for (const file of files) {
     if (options.signal?.aborted) break;
@@ -597,8 +851,8 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
       skipped.push({ filePath: display, reason: "TypeScript program did not include the file" });
       continue;
     }
-    const text = sourceFile.text;
-    if (isGenerated(display, text)) {
+    const originalText = readFileSync(file, "utf8");
+    if (isGenerated(display, originalText)) {
       skipped.push({ filePath: display, reason: "generated or vendor-like file" });
       continue;
     }
@@ -607,17 +861,21 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
       skipped.push({ filePath: display, reason: "file has TypeScript syntax diagnostics" });
       continue;
     }
-    const sourceHash = contentHashOnce(file, text);
+    const sourceHash = contentHashOnce(file, originalText);
     hashes.set(path.resolve(file), sourceHash);
     validFiles.add(path.resolve(file));
     scannedFiles.push(display);
     if (findings.length < maxFindings) {
       const remaining = maxFindings - findings.length;
-      findings.push(...scanImports(project, sourceFile, sourceHash, root).slice(0, remaining));
+      findings.push(...scanImports(project, sourceFile, sourceHash, root, manifests).slice(0, remaining));
     }
     if (findings.length < maxFindings) {
       const remaining = maxFindings - findings.length;
       findings.push(...scanCatchClauses(sourceFile, sourceHash, root).slice(0, remaining));
+      const numericRemaining = maxFindings - findings.length;
+      findings.push(...scanEmptyNumericFieldCoercions(project, sourceFile, sourceHash, root).slice(0, numericRemaining));
+      const placeholderRemaining = maxFindings - findings.length;
+      findings.push(...scanExplicitPlaceholders(project, sourceFile, sourceHash, root).slice(0, placeholderRemaining));
     }
   }
 

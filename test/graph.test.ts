@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import * as ts from "typescript";
@@ -72,6 +73,62 @@ test("repository graph links symbols, calls, tests, specifications, public surfa
   assert.match(surface?.summary ?? "", /0 added, 0 changed, 0 removed/);
 });
 
+test("repository graph reports runtime import cycles only for complete repository scope", async () => {
+  const { root, state, config } = fixture();
+  writeFileSync(path.join(root, "src/a.ts"), "import { b } from './b.js';\nexport const a = b + 1;\n");
+  writeFileSync(path.join(root, "src/b.ts"), "import { a } from './a.js';\nexport const b = a + 1;\n");
+  const paths = ["src/a.ts", "src/b.ts"];
+  const explicit = await collectGraphEvidence(root, paths, config, undefined, state, "explicit");
+  assert.equal(explicit.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+  const repository = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
+  const cycle = repository.findings.find((item) => item.ruleId === "dependency.import-cycle");
+  assert.ok(cycle);
+  assert.match(cycle.message, /strongly connected set/);
+  assert.match(cycle.message, /src\/a\.ts, src\/b\.ts/);
+
+  writeFileSync(path.join(root, "src/a.ts"), "import type { B } from './b.js';\nexport interface A { b?: B }\n");
+  writeFileSync(path.join(root, "src/b.ts"), "import type { A } from './a.js';\nexport interface B { a?: A }\n");
+  const typeOnly = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
+  assert.equal(typeOnly.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+
+  writeFileSync(path.join(root, "src/a.ts"), "import { type B } from './b.js';\nexport interface A { b?: B }\n");
+  writeFileSync(path.join(root, "src/b.ts"), "export { type A } from './a.js';\nexport interface B { value: string }\n");
+  const specifierTypeOnly = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
+  assert.equal(specifierTypeOnly.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+
+  writeFileSync(path.join(root, "src/a.ts"), "import { type B, value } from './b.js';\nexport const a = value;\nexport interface A { b?: B }\n");
+  writeFileSync(path.join(root, "src/b.ts"), "import type { A } from './a.js';\nexport const value = 1;\nexport interface B { a?: A }\n");
+  const mixed = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
+  assert.equal(mixed.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+
+  const fixturePaths = ["benchmark/fixtures/cycle-a.ts", "benchmark/fixtures/cycle-b.ts"];
+  mkdirSync(path.join(root, "benchmark/fixtures"), { recursive: true });
+  writeFileSync(path.join(root, fixturePaths[0]), "import { b } from './cycle-b.js';\nexport const a = b + 1;\n");
+  writeFileSync(path.join(root, fixturePaths[1]), "import { a } from './cycle-a.js';\nexport const b = a + 1;\n");
+  const fixtureCycle = await collectGraphEvidence(root, fixturePaths, config, undefined, state, "repository");
+  assert.equal(fixtureCycle.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+});
+
+test("partial scans preserve unseen graph facts while complete scans prune them", async () => {
+  const { root, state, config } = fixture();
+  writeFileSync(path.join(root, "src/a.ts"), "import { b } from './b.js';\nexport const a = b;\n");
+  writeFileSync(path.join(root, "src/b.ts"), "import { a } from './a.js';\nexport const b = a;\n");
+  writeFileSync(path.join(root, "src/current.ts"), "export const current = 1;\n");
+  const initial = await collectGraphEvidence(root, ["src/a.ts", "src/b.ts"], config, undefined, state, "repository");
+  assert.ok(initial.findings.some((item) => item.ruleId === "dependency.import-cycle"));
+  const partial = await collectGraphEvidence(root, ["src/current.ts"], config, undefined, state, "explicit");
+  assert.equal(partial.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+  const retained = new GraphStore(root, state);
+  assert.deepEqual(retained.files(), ["src/a.ts", "src/b.ts", "src/current.ts"]);
+  retained.close();
+
+  const complete = await collectGraphEvidence(root, ["src/current.ts"], config, undefined, state, "repository");
+  assert.equal(complete.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+  const converged = new GraphStore(root, state);
+  assert.deepEqual(converged.files(), ["src/current.ts"]);
+  converged.close();
+});
+
 test("graph batches parse each TypeScript project once and persist in one transaction", async () => {
   const { root, state, config } = fixture();
   const paths = Array.from({ length: 25 }, (_, index) => `src/value-${index}.ts`);
@@ -104,6 +161,8 @@ test("graph batches parse each TypeScript project once and persist in one transa
   assert.equal(store.updateFiles(built.facts), paths.length);
   assert.equal(store.updateFiles(built.facts), 0);
   assert.equal(store.statistics().files, paths.length);
+  assert.ok(store.fileNodes().every((node) => node.kind === "file"));
+  assert.ok(store.importEdges().every((edge) => edge.kind === "imports"));
   const nodePages = [...store.nodePages(7)];
   assert.ok(nodePages.length > 1);
   assert.equal(nodePages.flat().length, store.statistics().nodes);
@@ -114,6 +173,25 @@ test("graph batches parse each TypeScript project once and persist in one transa
   assert.ok(edgePages.length > 1);
   assert.equal(edgePages.flat().length, store.edges(paths[0]).length);
   store.close();
+});
+
+test("graph store migrates v2 databases to indexed cycle queries", () => {
+  const { root, state } = fixture();
+  const initial = new GraphStore(root, state);
+  const databasePath = initial.databasePath;
+  initial.close();
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec("DROP INDEX IF EXISTS nodes_kind_idx; DROP INDEX IF EXISTS edges_kind_idx; PRAGMA user_version=2;");
+  legacy.close();
+  const migrated = new GraphStore(root, state);
+  migrated.close();
+  const checked = new DatabaseSync(databasePath, { readOnly: true });
+  assert.equal(Number((checked.prepare("PRAGMA user_version").get() as { user_version: number }).user_version), 3);
+  const nodeIndexes = checked.prepare("PRAGMA index_list(nodes)").all().map((row: any) => String(row.name));
+  const edgeIndexes = checked.prepare("PRAGMA index_list(edges)").all().map((row: any) => String(row.name));
+  checked.close();
+  assert.ok(nodeIndexes.includes("nodes_kind_idx"));
+  assert.ok(edgeIndexes.includes("edges_kind_idx"));
 });
 
 test("graph builder streams fact batches without retaining the aggregate", async () => {
@@ -185,7 +263,14 @@ test("repository graph summarizes duplicate groups once with bounded examples", 
   for (const [index, filePath] of paths.entries()) {
     writeFileSync(path.join(root, filePath), `export function clone${index}(value: number) { const adjusted = value + 1; return adjusted * 2; }\n`);
   }
-  const ignoredPaths = ["tests/clone-a.ts", "tests/clone-b.ts", "backend/alembic/versions/0001_a.py", "backend/alembic/versions/0002_b.py"];
+  const ignoredPaths = [
+    "tests/clone-a.ts",
+    "tests/clone-b.ts",
+    "backend/alembic/versions/0001_a.py",
+    "backend/alembic/versions/0002_b.py",
+    "benchmark/fixtures/reference/clone-a.ts",
+    "benchmark/fixtures/reference/clone-b.ts",
+  ];
   for (const filePath of ignoredPaths) {
     mkdirSync(path.dirname(path.join(root, filePath)), { recursive: true });
     writeFileSync(path.join(root, filePath), filePath.endsWith(".py")

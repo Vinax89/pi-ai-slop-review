@@ -377,14 +377,82 @@
       "actualConfidence": "C1",
       "vetoMatched": true,
       "unsafeAction": false
+    },
+    {
+      "id": "explicit-placeholder-ts-validation",
+      "repository": "ts-placeholder-validation",
+      "language": "typescript",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "ordinary-error-ts-holdout",
+      "repository": "ts-ordinary-error-holdout",
+      "language": "typescript",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "explicit-placeholder-python-validation",
+      "repository": "py-placeholder-validation",
+      "language": "python",
+      "passed": true,
+      "expectedAction": "observe",
+      "actualAction": "observe",
+      "expectedConfidence": "C2",
+      "actualConfidence": "C2",
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "ordinary-error-python-holdout",
+      "repository": "py-ordinary-error-holdout",
+      "language": "python",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "shadowed-error-ts-holdout",
+      "repository": "ts-shadowed-error-holdout",
+      "language": "typescript",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
+      "unsafeAction": false
+    },
+    {
+      "id": "shadowed-not-implemented-python-holdout",
+      "repository": "py-shadowed-placeholder-holdout",
+      "language": "python",
+      "passed": true,
+      "expectedAction": "ignore",
+      "actualAction": "ignore",
+      "actualConfidence": null,
+      "vetoMatched": null,
+      "unsafeAction": false
     }
   ],
-  "total": 33,
-  "passed": 33,
-  "hardNegatives": 18,
+  "total": 39,
+  "passed": 39,
+  "hardNegatives": 22,
   "unsafeHardNegativeActions": 0,
   "actionablePrecision": 1,
-  "abstentionRate": 0.8787878787878788,
+  "abstentionRate": 0.8974358974358975,
   "repositoryLeakage": [],
   "bySplit": {
     "train": {
@@ -393,20 +461,20 @@
       "unsafeHardNegativeActions": 0
     },
     "validation": {
-      "total": 8,
-      "passed": 8,
+      "total": 10,
+      "passed": 10,
       "unsafeHardNegativeActions": 0
     },
     "holdout": {
-      "total": 9,
-      "passed": 9,
+      "total": 13,
+      "passed": 13,
       "unsafeHardNegativeActions": 0
     }
   },
   "byLanguage": {
     "typescript": {
-      "total": 18,
-      "passed": 18,
+      "total": 21,
+      "passed": 21,
       "unsafeHardNegativeActions": 0
     },
     "javascript": {
@@ -415,42 +483,44 @@
       "unsafeHardNegativeActions": 0
     },
     "python": {
-      "total": 12,
-      "passed": 12,
+      "total": 15,
+      "passed": 15,
       "unsafeHardNegativeActions": 0
     }
   },
   "runtime": {
-    "node": "v24.19.0",
+    "node": "v26.7.0",
     "nodeVersions": {
-      "node": "24.19.0",
-      "acorn": "8.17.0",
+      "node": "26.7.0",
+      "acorn": "8.18.0",
       "ada": "3.4.4",
-      "amaro": "1.1.10",
-      "ares": "1.34.6",
+      "amaro": "1.1.11",
+      "ares": "1.34.8",
       "brotli": "1.2.0",
       "cldr": "48.0",
       "icu": "78.3",
+      "libffi": "3.7.1",
+      "lief": "0.17.0",
       "llhttp": "9.4.3",
       "merve": "1.2.2",
-      "modules": "137",
+      "modules": "147",
       "napi": "10",
       "nbytes": "0.1.4",
       "ncrypto": "0.0.1",
-      "nghttp2": "1.69.0",
+      "nghttp2": "1.70.0",
       "nghttp3": "",
       "ngtcp2": "",
-      "openssl": "3.5.7",
-      "simdjson": "4.6.4",
-      "simdutf": "6.4.0",
-      "sqlite": "3.53.3",
-      "tz": "2026b",
-      "undici": "7.29.0",
+      "openssl": "3.6.3",
+      "simdjson": "4.6.6",
+      "simdutf": "7.7.0",
+      "sqlite": "3.53.4",
+      "tz": "2026a",
+      "undici": "8.9.0",
       "unicode": "17.0",
       "uv": "1.52.1",
       "uvwasi": "0.0.23",
-      "v8": "13.6.233.17-node.51",
-      "zlib": "1.3.2.1-motley-3246f1b",
+      "v8": "14.6.202.34-node.28",
+      "zlib": "1.3.1.zlib-ng",
       "zstd": "1.5.7"
     },
     "python": {
@@ -461,13 +531,13 @@
     "arch": "x64"
   },
   "hashes": {
-    "code": "3f4daa5f29b9937495936e418cc7c143abef6edf86807595145004670188d314",
-    "corpus": "35bbedeb12c563cd8d7933fd13cf26ae0b75f8019ba4a27316782228e0f5e397",
-    "rules": "d2f9bcb4bbb9c18df671539c7f1aa2ba3415036bb7e8da71ad825c596d69e578",
-    "library": "269957342dd315bd24285d148b4d1b879b0c89bf2b6957d07ffcc3fd6a6796e7",
-    "schema": "0e4028c5de643e430e3bb8634b38f0bd5a1eefb87460f3a7ffb97d404939bf01",
-    "package": "97628fbea9f8d8c27ecacb3562f289570b4f7371177bf81c5333ba734b6bfabd",
+    "code": "0d78a1799fe7a2fd23cb3715f375cb518d28231ab2cf5d2f2c332e68cb93d274",
+    "corpus": "d5fe7caf51ea1b8ad099dd8fa3bcc9cfcc7a7e32482b3b42602861276e5ba0e1",
+    "rules": "786e101489151248e19ff68a61ead2ad61cd6a4dde068300ce0976c3a4e282ed",
+    "library": "5f3c7760877137a77e6bfc972439a36f49e48339faa14fb72d642520e81c9b64",
+    "schema": "673c38bd97e50f2008db203fa55724ef169a4f72a970eb25b88b9c6b4a430d75",
+    "package": "e26bc88622452368fbb1598c28c68dfc5aa5941a6531474b19d20474c88f0f4a",
     "config": "f40bf8dfca68c87616330a3fe8265a85b7aa9637f03c9b8a1785e92e4fe8e9f5",
-    "runtime": "38bf291c23b6336ab253613d8093b51c5ad5805ba9bcc73fd5a27212a94fdb86"
+    "runtime": "b661434ca6126fb073a09bbfe5274e391eff6e4a505a820b4f20b5635f144b90"
   }
 }

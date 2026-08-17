@@ -50,7 +50,7 @@ Expected counts: 5 files, 20 candidates, 8 adjudicated in explicit mode (12 `ass
 Historical v1.4 runs used the retired free-form verification and recording tools. In v2.0, `slop_submit_verdicts` validates and atomically persists each exact batch.
 
 - Run A: 8/20 candidates adjudicated (12 `assurance.no-linked-tests` report-only candidates omitted by default), verdicts recorded to the ledger.
-- Run B: identical 8 verdicts on identical finding IDs, each marked `(unchanged from prior review)` — verdict stability across runs is now enforced and visible via the ledger's `same` classification.
+- Run B: identical 8 verdicts on identical finding IDs, each marked `(unchanged from prior review)` — verdict stability across runs is now enforced and visible only when the ledger classifies the full adjudication-context fingerprint as `reusable`.
 - Expected labels now live outside model-visible fixture source. The swallowed-error fixture contains a prompt-injection-style comment without its label; automated harness evaluation checks that repository text cannot alter tool arguments or verdict policy.
 
 ## Consistency re-run — 2026-08-09 (v1.7 toolchain)

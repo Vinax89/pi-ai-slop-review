@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+## 2.0.2
+
+- Resolve bare TypeScript imports against the nearest workspace package manifest and Python imports against PEP 735 dependency groups before reporting missing dependencies.
+- Build runtime-cycle components from runtime edges only, so type-only return edges cannot manufacture a runtime cycle.
+- Exclude fixture and test trees from exact-body duplicate and runtime-cycle candidates while retaining production observations.
+- Detect quiet post-handler fallbacks, exception-skipped validation inputs, and narrowly proven Python locals that escape an `isinstance` guard without assignment.
+- Detect inert pass-only conditions inside tests and comma-delimited numeric fields that coerce empty text to zero without a guard.
+- Add synthetic positive and hard-negative regressions derived from independently reviewed real-repository calibration, without shipping repository source or labels.
+- Add an external-manifest real-repository corpus pipeline with frozen repository-level splits, strict checkout provenance, holdout non-observation, bounded source-only fixtures, balanced candidate/control sampling, and independently preserved private review sheets.
+- Keep private repository source and labels outside the npm package, and ship a strict corpus-manifest schema plus packaging/release privacy gates.
+- Remove the retired Node type-transformation flag so development and evaluation scripts remain compatible through Node 26.
+- Exclude provider timing jitter from scan and adjudication-context identities while retaining provider status, capabilities, versions, and diagnostics.
+- Add independent, dependency-free repository import-cycle analysis over resolved graph edges.
+- Preserve type-only edge provenance, suppress all-type-only cycles, and require complete repository scope before emitting cycle candidates.
+- Detect explicit placeholder-only TypeScript/JavaScript function bodies as context-dependent observations.
+- Harden graph analysis against per-specifier type imports, stale out-of-scope facts, deep graphs, control-character paths, and oversized cycle summaries.
+- Add indexed cycle queries, actionable arrow-function names, and positive/hard-negative placeholder evaluation cases.
+- Make complete clean repository scans prune stale graph facts while partial and explicit scans preserve unobserved state.
+- Store cycle edge provenance as bounded counts instead of potentially large identifier arrays.
+- Render cycle membership without implying a traversal order and sanitize source-controlled placeholder names in diagnostics.
+- Add release-facing skill assertions for conservative cycle and placeholder adjudication without third-party branding.
+- Reject verdict-manifest traversal and symlink escapes, and create exports through exclusive private temporary files.
+- Enforce verdict batch, evidence, duplicate-ID, and normalized-rationale bounds in the transactional storage layer.
+- Require exact private-label/static/adjudication set equality and validate untrusted blind-harness adapter transcripts.
+- Deduplicate reverse cycle connectivity, budget cycle results deterministically, and retain exact count-only edge provenance.
+- Detect explicit Python `NotImplementedError` placeholders and standard JavaScript error-subclass placeholder markers conservatively.
+- Verify actual core-tool registrations and per-tool prompt guidance, and include the benchmark in `release:check`.
+- Bound raw verdict inputs before normalization or deduplication and sanitize legacy rationale in reports and manifests.
+- Reject symlinks and special files in blind fixtures, bound adapter dimensions and label files, and require exact external label separation.
+- Prevent unsubmitted adjudication batches from being overwritten and return canonical batch/representative/report-only coverage metadata.
+- Avoid placeholder false positives from shadowed JavaScript error constructors and Python `NotImplementedError` bindings.
+- Let published-package users run blind evaluation with external fixture and label paths while keeping private evaluation data out of npm.
+- Reject stale scans before adjudication, redisplay pending batches after context compaction, and resume interrupted full reviews from exact-scan persisted coverage.
+- Distinguish graph-context query failure from an empty graph in verdict fingerprints.
+- Reject hard-linked blind fixtures, revalidate copied workspaces, constrain label schemas, and require strict first-occurrence tool order.
+- Add release-corpus hard negatives for project-shadowed placeholder exception constructors.
+- Correct stale documentation about opt-in forensics, reusable verdict semantics, and the current completion-audit release.
+
 ## 2.0.1
 
 - Require positive evidence or complete reference coverage before confirming wrapper redundancy.

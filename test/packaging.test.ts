@@ -26,15 +26,31 @@ test("skill keeps conservative evidence policy and explicit repository aliases",
   assert.match(skill, /Matching signatures and bodies establish duplication, not by themselves a maintenance problem/);
   assert.match(skill, /Evidence IDs are finding-scoped/);
   assert.match(skill, /Missing static edges are not proof of no callers/);
+  assert.match(skill, /Import cycle: classify runtime versus type-only and registration edges/);
+  assert.match(skill, /Explicit placeholder: inspect callers, interfaces, subclasses, feature registration, and tests/);
+  assert.doesNotMatch(skill, /deslop-js|karpeslop|lintmax|vibecheck/i);
   assert.doesNotMatch(skill, /Confirm an unexported identity wrapper with no discovered callers/);
+});
+
+test("every registered Pi tool names itself in each prompt guideline", () => {
+  const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+  const registrations = [...source.matchAll(/pi\.registerTool\(\{[\s\S]*?name: "([^"]+)"[\s\S]*?promptGuidelines: \[([\s\S]*?)\],\n\s+parameters:/g)];
+  assert.ok(registrations.length >= 9);
+  for (const [, toolName, block] of registrations) {
+    const guidelines = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    assert.ok(guidelines.length > 0, `${toolName} has no prompt guidelines`);
+    for (const guideline of guidelines) assert.match(guideline, new RegExp(`\\b${toolName}\\b`), `${toolName} guideline does not name its tool`);
+  }
 });
 
 test("npm pack contains runtime, schema, documentation, and metadata artifacts", () => {
   const files = packedFiles();
-  for (const required of ["dist/src/isolated-scan.js", "dist/src/python_common.py", "index.ts", "skills/ai-slop-review/SKILL.md", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "schema/config.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md"]) {
+  for (const required of ["dist/src/isolated-scan.js", "dist/src/evaluation/repository-corpus.js", "dist/src/python_common.py", "index.ts", "skills/ai-slop-review/SKILL.md", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "src/evaluation/repository-corpus.ts", "schema/config.schema.json", "schema/repository-corpus-manifest.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md"]) {
     assert.ok(files.includes(required), `packed package is missing ${required}`);
   }
   assert.equal(files.some((file) => file.startsWith("test/")), false);
+  assert.equal(files.some((file) => file.startsWith("evaluation-private/") || file.startsWith("artifacts/verdict-corpus/")), false);
+  assert.equal(files.some((file) => /(?:repository-manifest\.json|reviewer-[ab]\.json|repository-index\.json|\/fixtures\/)/.test(file)), false);
   const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
     engines: { node: string };
     pi: { extensions: string[]; skills: string[] };
@@ -63,7 +79,7 @@ test("packed evaluation module imports and loads the bundled corpus", () => {
     execFileSync("tar", ["-xzf", path.join(destination, archive)], { cwd: destination });
     const extracted = path.join(destination, "package");
     const script = "import { loadCorpus } from './src/evaluation/corpus.ts'; process.stdout.write(JSON.stringify({ count: loadCorpus('./library/cases.jsonl').length }));";
-    const runtimeOutput = execFileSync(process.execPath, ["--experimental-strip-types", "--experimental-transform-types", "--input-type=module", "-e", script], { cwd: extracted, encoding: "utf8" });
+    const runtimeOutput = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script], { cwd: extracted, encoding: "utf8" });
     const count = JSON.parse(runtimeOutput).count as number;
     assert.ok(count >= 31, `packed corpus contains ${count} cases`);
   } finally {

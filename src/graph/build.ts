@@ -16,6 +16,7 @@ const execFileAsync = promisify(execFile);
 const PYTHON_HELPER = fileURLToPath(new URL("../python_graph_helper.py", import.meta.url));
 const PYTHON_BATCH_SIZE = 500;
 const PYTHON_BATCH_CONCURRENCY = 2;
+const GRAPH_EXTRACTION_VERSION = 2;
 const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 type GraphCacheRecord = { cacheHash: string; contentHash?: string };
 function pythonGraphCacheHash(contentHash: string): string {
@@ -31,6 +32,19 @@ function matches(filePath: string, patterns: string[]): boolean {
       return filePath.includes(pattern.replace(/\*+/g, ""));
     }
   });
+}
+
+function typeOnlyModuleEdge(node: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
+  if (ts.isExportDeclaration(node)) {
+    if (node.isTypeOnly) return true;
+    return Boolean(node.exportClause && ts.isNamedExports(node.exportClause) && node.exportClause.elements.length > 0 &&
+      node.exportClause.elements.every((element) => element.isTypeOnly));
+  }
+  const clause = node.importClause;
+  if (!clause) return false;
+  if (clause.isTypeOnly) return true;
+  return !clause.name && Boolean(clause.namedBindings && ts.isNamedImports(clause.namedBindings) && clause.namedBindings.elements.length > 0 &&
+    clause.namedBindings.elements.every((element) => element.isTypeOnly));
 }
 
 function nodeId(filePath: string, kind: GraphNodeKind, qualifiedName: string): string {
@@ -224,7 +238,7 @@ function extractTypescript(
       const reusable = reusableByKey.get(key);
       const configured = reusable ? undefined : configForFiles(files, key === "<none>" ? undefined : key, groupFiles.length > files.length);
       const options = reusable?.options ?? configured!.options;
-      let compilerContext = JSON.stringify(options);
+      let compilerContext = `${GRAPH_EXTRACTION_VERSION}\0${JSON.stringify(options)}`;
       const contextPath = reusable?.configPath ?? (key === "<none>" || key.startsWith("<reusable:") ? undefined : key);
       if (contextPath) {
         try {
@@ -320,7 +334,8 @@ function extractTypescript(
           const targetId = resolved && normalizePath(path.resolve(resolved)).startsWith(`${normalizePath(rootDir)}/`)
             ? nodeId(normalizePath(path.relative(rootDir, resolved)), "file", normalizePath(path.relative(rootDir, resolved)))
             : fingerprint("graph-dependency", { specifier });
-          edges.push(edge(filePath, rootNode.id, targetId, "imports", resolved ? "C3" : "C2", { specifier, resolved: resolved ? normalizePath(path.relative(rootDir, resolved)) : undefined }));
+          const typeOnly = typeOnlyModuleEdge(node);
+          edges.push(edge(filePath, rootNode.id, targetId, "imports", resolved ? "C3" : "C2", { specifier, resolved: resolved ? normalizePath(path.relative(rootDir, resolved)) : undefined, typeOnly }));
         }
         if (ts.isCallExpression(node)) {
           const symbol = checker.getSymbolAtLocation(node.expression);

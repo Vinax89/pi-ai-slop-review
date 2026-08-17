@@ -33,6 +33,22 @@ rules:
     verification_steps:
       - Run typechecking, caller tests, and a public-surface comparison before proposing removal.
 
+  - id: dependency.import-cycle
+    scope: repository
+    classification: context_conflict
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: Resolved file imports place multiple files in one strongly connected component that may create coupling or initialization-order risk; displayed members do not assert one traversal order.
+    vetoes: [type-only-cycle, intentional-registration-cycle, generated-code, documented-package-boundary]
+    maximum_action: observe
+    remediation_steps:
+      - Classify every edge as runtime, type-only, registration, or compatibility-related before changing the cycle.
+      - Identify the shared responsibility or boundary that created the dependency loop.
+      - Break only a proven harmful runtime cycle through an existing abstraction or a narrowly scoped interface.
+    verification_steps:
+      - Re-run the complete repository graph, typecheck, and affected initialization or integration tests.
+
   - id: errors.suppressed
     scope: artifact
     classification: context_conflict
@@ -48,6 +64,67 @@ rules:
       - Do not insert a throw without checking every caller and boundary contract.
     verification_steps:
       - Add or run a focused failure-path test and verify caller behavior.
+
+  - id: structure.explicit-placeholder
+    scope: artifact
+    classification: context_conflict
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A function body consists only of an error explicitly identifying the implementation as a placeholder.
+    vetoes: [intentional-unsupported-operation, abstract-subclass-contract, test-fixture, generated-code]
+    maximum_action: observe
+    remediation_steps:
+      - Trace callers, interfaces, subclasses, and feature registration before deciding whether implementation is missing.
+      - Implement the documented contract or replace the placeholder with an explicit supported boundary only when repository evidence establishes the intended behavior.
+      - Preserve intentional unsupported-operation and abstract subclass contracts.
+    verification_steps:
+      - Run contract, caller, and failure-path tests for the affected function.
+
+  - id: correctness.conditionally-unbound-local
+    scope: artifact
+    classification: defect
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A Python local is read after assignment on only one branch, which may raise UnboundLocalError for other inputs.
+    vetoes: [alternate-branch-terminates, prior-binding, dynamic-control-flow]
+    maximum_action: observe
+    remediation_steps:
+      - Confirm an executable path reaches the read without first binding the local.
+      - Initialize the local or make every continuing branch assign it without changing malformed-input behavior.
+    verification_steps:
+      - Run a focused malformed-input test and the project Python type checker when configured.
+
+  - id: correctness.empty-numeric-field-coercion
+    scope: artifact
+    classification: defect
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A delimited JavaScript field is trimmed and passed to Number without rejecting empty text, causing an empty field to become zero.
+    vetoes: [explicit-empty-field-guard, intentional-empty-as-zero-contract, non-global-number-constructor]
+    maximum_action: observe
+    remediation_steps:
+      - Confirm empty fields are invalid under the parser contract and reach the numeric conversion.
+      - Reject empty trimmed fields before conversion without changing valid zero handling.
+    verification_steps:
+      - Add focused cases for empty fields, whitespace-only fields, valid zero, malformed numbers, and bounds.
+
+  - id: assurance.inert-test-check
+    scope: artifact
+    classification: assurance_gap
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A conditional inside a test contains only pass, so the named condition cannot make the test fail.
+    vetoes: [intentional-instrumentation, generated-test, non-assertive-example]
+    maximum_action: observe
+    remediation_steps:
+      - Confirm the test name or contract intends to enforce the condition.
+      - Replace the no-op with an assertion or remove the misleading check when it is intentionally informational.
+    verification_steps:
+      - Mutate or fixture the violating condition and prove the test fails for the intended reason.
 
   - id: data.hidden-catch-fallback
     scope: artifact

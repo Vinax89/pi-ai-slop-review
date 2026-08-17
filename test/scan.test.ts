@@ -290,7 +290,7 @@ test("an idle isolated worker does not keep the parent process alive", () => {
     // Dynamic imports here run inside a separate `node -e` process whose module
     // graph must stay independent of this test process — static imports cannot.
     const script = `const { scanFilesIsolated } = await import(${JSON.stringify(entry)}); const { DEFAULT_CONFIG } = await import(${JSON.stringify(pathToFileURL(path.resolve(import.meta.dirname, "../src/core/config.ts")).href)}); const config = structuredClone(DEFAULT_CONFIG); config.graph.enabled = false; await scanFilesIsolated(${JSON.stringify(root)}, ['input.ts'], undefined, 'explicit', { config });`;
-    execFileSync(process.execPath, ["--experimental-strip-types", "--experimental-transform-types", "--input-type=module", "-e", script], {
+    execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script], {
       timeout: 30_000,
       stdio: "ignore",
     });

@@ -6,9 +6,13 @@ import { createScanResult, fingerprint, normalizePath } from "../core/schema.ts"
 import { offsetRange, safeProjectFile } from "../providers/files.ts";
 import { SCHEMA_VERSION, type EvidenceRecord, type FindingDraft, type ScanResult, type ScanScope, type SkippedFile, type SourceRange } from "../types.ts";
 import type { TypeScriptProjectContext } from "../typescript-scanner.ts";
+import { formatImportCycle, importCycles } from "./analysis.ts";
 import { buildGraphFacts } from "./build.ts";
 import { GraphStore } from "./store.ts";
 import type { GraphNode, PublicSurfaceEntry } from "./types.ts";
+
+const GRAPH_PROVIDER_VERSION = "2";
+const NON_PRODUCTION_STRUCTURAL_PATH = /(?:^|\/)(?:tests?|fixtures?|alembic\/versions|migrations)(?:\/|$)/;
 
 function matches(filePath: string, patterns: string[]): boolean {
   return patterns.some((pattern) => pathMatches(filePath, pattern));
@@ -72,7 +76,7 @@ function evidenceForNode(
     schemaVersion: SCHEMA_VERSION,
     id: fingerprint("evidence", { nodeId: node.id, provider: "repository-graph", summary, details }),
     providerId: "repository-graph",
-    providerVersion: "1",
+    providerVersion: GRAPH_PROVIDER_VERSION,
     kind,
     summary,
     strength: "C2",
@@ -98,11 +102,11 @@ export async function collectGraphEvidence(
       engineVersion: skipReason ? "repository graph memory bounded" : "repository graph disabled",
       rootDir,
       providerId: "repository-graph",
-      providerVersion: "1",
+      providerVersion: GRAPH_PROVIDER_VERSION,
       providerCapabilities: ["symbols", "references", "call-hierarchy", "public-surface", "tests"],
       providers: [{
         id: "repository-graph",
-        version: "1",
+        version: GRAPH_PROVIDER_VERSION,
         capabilities: ["symbols", "references", "call-hierarchy", "public-surface", "tests"],
         status: "skipped",
         diagnostic,
@@ -145,18 +149,47 @@ export async function collectGraphEvidence(
       .map(([filePath]) => filePath);
     store.removeFiles([...new Set([...invalidFiles, ...missingFiles])]);
     const reviewedFiles = new Set([...changedFiles, ...built.cachedFiles].sort());
+    if (mode === "repository" && skipped.length === 0) {
+      store.removeFiles(store.files().filter((filePath) => !reviewedFiles.has(filePath)));
+    }
     const affectedFiles = new Set([...changedFiles, ...invalidFiles, ...missingFiles]);
     const beforeSurface = beforeCandidates.filter((entry) => affectedFiles.has(entry.filePath));
     const reportedCloneGroups = new Set<string>();
+
+    if (mode === "repository" && !skipped.length) {
+      const allNodes = store.fileNodes().filter((node) => reviewedFiles.has(node.filePath));
+      const scopedEdges = store.importEdges().filter((edge) => reviewedFiles.has(edge.filePath));
+      for (const cycle of importCycles(allNodes, scopedEdges, config.limits.maxFindings - findings.length, true)) {
+        if (findings.length >= config.limits.maxFindings) break;
+        if (cycle.files.every((filePath) => NON_PRODUCTION_STRUCTURAL_PATH.test(filePath))) continue;
+        const representative = allNodes.find((node) => node.kind === "file" && node.filePath === cycle.files[0]);
+        if (!representative) continue;
+        const finding = findingForNode(rootDir, representative, {
+          anchor: `import-cycle:${fingerprint("cycle", cycle.files)}`,
+          ruleId: "dependency.import-cycle",
+          classification: "context_conflict",
+          confidence: "C2",
+          risk: "R2",
+          maximumAction: "observe",
+          message: `Resolved imports form a strongly connected set across ${cycle.files.length} file(s); members: ${formatImportCycle(cycle.files)}`,
+          evidence: ["complete repository graph contains a strongly connected component with at least one runtime import"],
+          counterEvidence: ["some cycles are intentional registration, compatibility, or package-boundary arrangements"],
+          unknown: cycle.typeOnlyEdgeCount
+            ? [`${cycle.typeOnlyEdgeCount} edge(s) are type-only; runtime initialization impact requires contextual review`]
+            : ["runtime initialization order and module side effects require contextual review"],
+        });
+        if (finding) findings.push(finding);
+      }
+    }
     reviewed: for (const page of store.nodePagesForFiles(reviewedFiles)) {
       for (const node of page) {
         if (findings.length >= config.limits.maxFindings) break reviewed;
         if (node.bodyHash && ["function", "class"].includes(node.kind) &&
-          !/(?:^|\/)(?:tests?|alembic\/versions|migrations)(?:\/|$)/.test(node.filePath)) {
+          !NON_PRODUCTION_STRUCTURAL_PATH.test(node.filePath)) {
           const cloneGroup = `${node.kind}:${node.bodyHash}`;
           if (!reportedCloneGroups.has(cloneGroup)) {
             const clones = store.clones(node.bodyHash, node.kind, config.limits.maxFindings + 1).filter(
-              (candidate) => !/(?:^|\/)(?:tests?|alembic\/versions|migrations)(?:\/|$)/.test(candidate.filePath),
+              (candidate) => !NON_PRODUCTION_STRUCTURAL_PATH.test(candidate.filePath),
             );
             const signature = node.signature?.slice(node.signature.indexOf("("));
             const compatibleSignatures = node.kind !== "function" || clones.every(
@@ -277,7 +310,7 @@ export async function collectGraphEvidence(
       schemaVersion: SCHEMA_VERSION,
       id: fingerprint("evidence", { provider: "repository-graph", publicDelta }),
       providerId: "repository-graph",
-      providerVersion: "1",
+      providerVersion: GRAPH_PROVIDER_VERSION,
       kind: "policy",
       summary: `public surface: ${publicDelta.added.length} added, ${publicDelta.changed.length} changed, ${publicDelta.removed.length} removed`,
       strength: "C2",
@@ -289,7 +322,7 @@ export async function collectGraphEvidence(
       schemaVersion: SCHEMA_VERSION,
       id: fingerprint("evidence", { provider: "repository-graph", statistics }),
       providerId: "repository-graph",
-      providerVersion: "1",
+      providerVersion: GRAPH_PROVIDER_VERSION,
       kind: "reference",
       summary: `repository graph contains ${statistics.files} file(s), ${statistics.nodes} node(s), and ${statistics.edges} edge(s); ${built.cachedFiles.length} cache hit(s), ${built.facts.length} updated`,
       strength: "C2",
@@ -297,10 +330,10 @@ export async function collectGraphEvidence(
     });
     return createScanResult({
       engine: "provider-federation",
-      engineVersion: "repository graph 1",
+      engineVersion: `repository graph ${GRAPH_PROVIDER_VERSION}`,
       rootDir,
       providerId: "repository-graph",
-      providerVersion: "1",
+      providerVersion: GRAPH_PROVIDER_VERSION,
       providerCapabilities: ["symbols", "references", "call-hierarchy", "public-surface", "tests"],
       evidenceRecords,
       scannedFiles: [...reviewedFiles],

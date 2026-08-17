@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Vinax89/pi-ai-slop-review/schema/repository-corpus-manifest.schema.json",
+  "title": "Private real-repository corpus manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "repositories",
+    "outputDirectory",
+    "labelsDirectory",
+    "maxFiles",
+    "maxReviewCases",
+    "controlsPerRepository"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "repositories": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "repository", "remote", "branch", "commit", "split", "checkoutPath"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+          "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+          "remote": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "branch": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "split": { "enum": ["train", "validation", "holdout"] },
+          "checkoutPath": { "$ref": "#/$defs/relativePath" }
+        }
+      }
+    },
+    "outputDirectory": { "$ref": "#/$defs/relativePath" },
+    "labelsDirectory": { "$ref": "#/$defs/relativePath" },
+    "maxFiles": { "type": "integer", "minimum": 1, "maximum": 10000 },
+    "maxReviewCases": { "type": "integer", "minimum": 1, "maximum": 500 },
+    "controlsPerRepository": { "type": "integer", "minimum": 0, "maximum": 50 }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(?:/|[A-Za-z]:[\\\\/])|(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)" }
+    }
+  }
+}
