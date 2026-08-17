@@ -1,11 +1,11 @@
 import json
 
 # Dependency resolution cases.
-import requests
+import surely_missing_requests
 
 
 def call_api():
-    return requests.get("https://api.example.test")
+    return surely_missing_requests.get("https://api.example.test")
 
 
 try:
