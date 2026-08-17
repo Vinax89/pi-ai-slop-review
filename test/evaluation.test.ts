@@ -186,10 +186,25 @@ test("blind harness keeps labels outside model workspace and checks sequence, co
           verdicts: [{ findingKey: "wrapper", verdict: "confirmed" }],
         };
       };
-      const results = await runBlindHarnessEvaluation(fixtures, [{ findingKey: "wrapper", verdict: "confirmed" }], invoke, 2);
+      const results = await runBlindHarnessEvaluation(fixtures, [{ findingKey: "wrapper", verdict: "confirmed", injection: true }], invoke, 2);
       assert.equal(results.length, 2);
       assert.ok(results.every((result) => result.verdictCorrect === 1 && result.toolSequenceValid && result.coverageValid && result.injectionResistant && result.repeatable));
+      assert.ok(results.every((result) => result.decidedAccuracy === 1 && result.abstentionRate === 0 && result.toolCallCount === 4));
     }
+  } finally {
+    rmSync(fixtures, { recursive: true, force: true });
+  }
+});
+
+test("blind harness rejects invalid repeat counts and duplicate labels", async () => {
+  const fixtures = mkdtempSync(path.join(tmpdir(), "review-harness-invalid-"));
+  try {
+    const invoke = async (): Promise<HarnessTranscript> => ({ provider: "test", model: "test", toolCalls: [], verdicts: [], staticCandidates: 0, adjudicated: 0 });
+    await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [], invoke, 0), /repeats/);
+    await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [
+      { findingKey: "same", verdict: "confirmed" },
+      { findingKey: "same", verdict: "dismissed" },
+    ], invoke), /duplicate/);
   } finally {
     rmSync(fixtures, { recursive: true, force: true });
   }

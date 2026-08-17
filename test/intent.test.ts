@@ -62,7 +62,7 @@ test("intent engine exposes competing intentional hypotheses from context", () =
   assert.equal(assessment.actionLimit, "propose");
   assert.equal(assessment.humanDecisionRequired, true);
   assert.ok(assessment.hypotheses.some((item) => item.kind === "framework-required"));
-  assert.ok(assessment.criteria.some((item) => /not AI-slop by itself/.test(item)));
+  assert.ok(assessment.criteria.some((item) => /not a defect by itself/.test(item)));
   assert.ok(assessment.decisionTrace.some((step) => step.id === "behavioral-contract" && step.result === "pass"));
 });
 

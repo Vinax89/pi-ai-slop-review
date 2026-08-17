@@ -17,5 +17,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+      - name: Install isolation dependency
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - run: npm ci
       - run: npm run validate

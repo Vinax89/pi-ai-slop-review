@@ -31,13 +31,28 @@ const VERDICTS = new Set<Verdict>(["confirmed", "dismissed", "needs-context"]);
 /** Hash every deterministic input available to adjudication. The scan content
  * hash deliberately invalidates conservatively when callers, tests, exports,
  * specifications, config, or other scanned repository context changes. */
-export function adjudicationContextFingerprint(rootDir: string, scan: ScanResult, finding: Finding): string {
+export function adjudicationContextFingerprint(
+  rootDir: string,
+  scan: ScanResult,
+  finding: Finding,
+  contextCache = new Map<string, ReturnType<typeof queryContext>>(),
+): string {
   const linked = new Set([...finding.evidenceIds, ...finding.counterEvidenceIds]);
   const evidence = scan.evidenceRecords.filter((record) =>
     linked.has(record.id) || record.source?.filePath === finding.filePath,
   );
   const graphContext = [finding.anchor, finding.filePath].map((query) => {
-    try { return queryContext(rootDir, query); } catch { return { query, nodes: [], impacts: [], publicSurface: [] }; }
+    const cached = contextCache.get(query);
+    if (cached) return cached;
+    try {
+      const context = queryContext(rootDir, query);
+      contextCache.set(query, context);
+      return context;
+    } catch {
+      const context = { query, nodes: [], impacts: [], publicSurface: [] };
+      contextCache.set(query, context);
+      return context;
+    }
   });
   return fingerprint("adjudication-context", {
     finding: {
@@ -63,12 +78,13 @@ export function recordVerdicts(rootDir: string, scan: ScanResult, entries: Verdi
   const byId = new Map(scan.findings.map((finding) => [finding.id, finding]));
   const now = new Date().toISOString();
   const records: VerdictRecord[] = [];
+  const contextCache = new Map<string, ReturnType<typeof queryContext>>();
   for (const entry of entries) {
     if (!VERDICTS.has(entry.verdict)) throw new Error(`verdict must be confirmed, dismissed, or needs-context`);
     const finding = byId.get(entry.findingId);
     if (!finding) throw new Error(`verdict references finding '${entry.findingId}' which is not in the latest review`);
     const evidenceIds = [...new Set(entry.evidenceIds ?? [])];
-    const knownEvidenceIds = new Set(scan.evidenceRecords.map((item) => item.id));
+    const knownEvidenceIds = new Set([...finding.evidenceIds, ...finding.counterEvidenceIds]);
     for (const evidenceId of evidenceIds) {
       if (!knownEvidenceIds.has(evidenceId)) throw new Error(`verdict for '${entry.findingId}' references unknown evidence '${evidenceId}'`);
     }
@@ -82,7 +98,7 @@ export function recordVerdicts(rootDir: string, scan: ScanResult, entries: Verdi
       line: finding.line,
       anchor: finding.anchor,
       sourceHash: finding.sourceHash,
-      adjudicationContextFingerprint: adjudicationContextFingerprint(rootDir, scan, finding),
+      adjudicationContextFingerprint: adjudicationContextFingerprint(rootDir, scan, finding, contextCache),
       scanScope: { mode: scan.scope.mode, contentHash: scan.scope.contentHash, paths: [...scan.scope.paths] },
       verdict: entry.verdict,
       evidence,
@@ -113,13 +129,14 @@ export function verdictLedger(rootDir: string, stateRoot?: string): VerdictRecor
 export function classifyVerdicts(rootDir: string, scan: ScanResult, ledger: VerdictRecord[]): VerdictDelta {
   const findings = scan.findings;
   const byId = new Map(ledger.map((record) => [record.findingId, record]));
+  const contextCache = new Map<string, ReturnType<typeof queryContext>>();
   const present = new Set<string>();
   const classified = findings.map((finding) => {
     present.add(finding.id);
     const record = byId.get(finding.id);
     const classification: VerdictClassification = !record
       ? { status: "new" }
-      : record.adjudicationContextFingerprint !== adjudicationContextFingerprint(rootDir, scan, finding)
+      : record.adjudicationContextFingerprint !== adjudicationContextFingerprint(rootDir, scan, finding, contextCache)
         ? { status: "context-changed", record }
         : { status: "reusable", record };
     return { finding, classification };

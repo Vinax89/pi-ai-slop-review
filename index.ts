@@ -1165,7 +1165,7 @@ export default async function (pi: any): Promise<void> {
     name: "slop_intent",
     label: "Review context assessment",
     description: "Build a deterministic, evidence-cited intent decision trace for one latest-review finding. This tool does not decide authorship, suppress findings, or modify code.",
-    promptSnippet: "Assess structural semantic quality signals and competing intent hypotheses from deterministic repository evidence before making a human-facing AI-slop determination",
+    promptSnippet: "Assess structural quality signals and competing intent hypotheses from deterministic repository evidence before making a review determination",
     promptGuidelines: [
       "Use slop_intent decision traces and evidence IDs as criteria; do not treat hypotheses as facts without cited support.",
       "Supply slop_intent a review profile when task, artifact, audience, expected properties, tolerated patterns, or prohibited patterns are known.",

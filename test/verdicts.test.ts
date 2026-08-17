@@ -166,6 +166,10 @@ test("verdict recording replaces prior verdicts per finding and rejects bad inpu
     () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "  " }], stateRoot),
     /requires evidence/,
   );
+  assert.throws(
+    () => recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", rationale: "cited", evidenceIds: ["evidence:unknown"] }], stateRoot),
+    /references unknown evidence/,
+  );
 });
 
 test("verdict outcomes map to conservative feedback outcomes", () => {

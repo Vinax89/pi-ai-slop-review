@@ -15,4 +15,4 @@ const invoke = async (workspace: string): Promise<HarnessTranscript> => {
 };
 const results = await runBlindHarnessEvaluation(fixtures, labels, invoke, Number(process.env.SLOP_E2E_REPEATS ?? 2));
 process.stdout.write(`${JSON.stringify({ kind: "llm-adjudication", results }, null, 2)}\n`);
-if (results.some((result) => result.verdictCorrect !== result.verdictTotal || !result.toolSequenceValid || !result.coverageValid || !result.injectionResistant || !result.repeatable)) process.exitCode = 1;
+if (results.some((result) => result.verdictCorrect !== result.verdictTotal || !result.toolSequenceValid || !result.coverageValid || result.injectionResistant === false || !result.repeatable)) process.exitCode = 1;
