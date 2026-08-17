@@ -72,6 +72,24 @@ test("repository graph links symbols, calls, tests, specifications, public surfa
   assert.match(surface?.summary ?? "", /0 added, 0 changed, 0 removed/);
 });
 
+test("repository graph reports runtime import cycles only for complete repository scope", async () => {
+  const { root, state, config } = fixture();
+  writeFileSync(path.join(root, "src/a.ts"), "import { b } from './b.js';\nexport const a = b + 1;\n");
+  writeFileSync(path.join(root, "src/b.ts"), "import { a } from './a.js';\nexport const b = a + 1;\n");
+  const paths = ["src/a.ts", "src/b.ts"];
+  const explicit = await collectGraphEvidence(root, paths, config, undefined, state, "explicit");
+  assert.equal(explicit.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+  const repository = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
+  const cycle = repository.findings.find((item) => item.ruleId === "dependency.import-cycle");
+  assert.ok(cycle);
+  assert.match(cycle.message, /src\/a\.ts -> src\/b\.ts/);
+
+  writeFileSync(path.join(root, "src/a.ts"), "import type { B } from './b.js';\nexport interface A { b?: B }\n");
+  writeFileSync(path.join(root, "src/b.ts"), "import type { A } from './a.js';\nexport interface B { a?: A }\n");
+  const typeOnly = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
+  assert.equal(typeOnly.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+});
+
 test("graph batches parse each TypeScript project once and persist in one transaction", async () => {
   const { root, state, config } = fixture();
   const paths = Array.from({ length: 25 }, (_, index) => `src/value-${index}.ts`);

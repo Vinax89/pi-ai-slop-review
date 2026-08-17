@@ -33,6 +33,22 @@ rules:
     verification_steps:
       - Run typechecking, caller tests, and a public-surface comparison before proposing removal.
 
+  - id: dependency.import-cycle
+    scope: repository
+    classification: context_conflict
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: Resolved file imports form a strongly connected component that may create coupling or initialization-order risk.
+    vetoes: [type-only-cycle, intentional-registration-cycle, generated-code, documented-package-boundary]
+    maximum_action: observe
+    remediation_steps:
+      - Classify every edge as runtime, type-only, registration, or compatibility-related before changing the cycle.
+      - Identify the shared responsibility or boundary that created the dependency loop.
+      - Break only a proven harmful runtime cycle through an existing abstraction or a narrowly scoped interface.
+    verification_steps:
+      - Re-run the complete repository graph, typecheck, and affected initialization or integration tests.
+
   - id: errors.suppressed
     scope: artifact
     classification: context_conflict
@@ -48,6 +64,22 @@ rules:
       - Do not insert a throw without checking every caller and boundary contract.
     verification_steps:
       - Add or run a focused failure-path test and verify caller behavior.
+
+  - id: structure.explicit-placeholder
+    scope: artifact
+    classification: context_conflict
+    ai_relation: none
+    risk: R2
+    confidence_cap: C2
+    claim: A function body consists only of an error explicitly identifying the implementation as a placeholder.
+    vetoes: [intentional-unsupported-operation, abstract-subclass-contract, test-fixture, generated-code]
+    maximum_action: observe
+    remediation_steps:
+      - Trace callers, interfaces, subclasses, and feature registration before deciding whether implementation is missing.
+      - Implement the documented contract or replace the placeholder with an explicit supported boundary only when repository evidence establishes the intended behavior.
+      - Preserve intentional unsupported-operation and abstract subclass contracts.
+    verification_steps:
+      - Run contract, caller, and failure-path tests for the affected function.
 
   - id: data.hidden-catch-fallback
     scope: artifact

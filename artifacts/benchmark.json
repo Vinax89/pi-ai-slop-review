@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-17T07:49:40.532Z",
+  "generatedAt": "2026-08-17T08:14:53.965Z",
   "runtime": {
     "node": "v24.19.0",
     "nodeVersions": {
@@ -35,7 +35,7 @@
     },
     "python": {
       "executable": "python3",
-      "version": "Python 3.14.7"
+      "version": "Python 3.11.2"
     },
     "platform": "linux",
     "arch": "x64"
@@ -47,22 +47,22 @@
     "graphResults": 1
   },
   "measurements": {
-    "coldScanMs": 582.82,
-    "recycledColdScanMs": 564.81,
-    "changedFileScanMs": 340.11,
-    "warmScanP50Ms": 1.8,
-    "warmScanP95Ms": 2.17,
+    "coldScanMs": 750.79,
+    "recycledColdScanMs": 621.49,
+    "changedFileScanMs": 345.85,
+    "warmScanP50Ms": 1.74,
+    "warmScanP95Ms": 2.2,
     "warmCacheHitRate": 1,
-    "warmWorkerCpuP50Ms": 1.77,
-    "coldWorkerHeapUsedMiB": 20.5,
-    "coldWorkerRssMiB": 239.79,
-    "largeAuditMs": 2284.85,
-    "largeWarmScanMs": 38.9,
-    "graphQueryMs": 0.65,
-    "rssHighWaterDeltaMiB": 14.7,
-    "heapUsedDeltaMiB": 5.08,
+    "warmWorkerCpuP50Ms": 1.81,
+    "coldWorkerHeapUsedMiB": 20.58,
+    "coldWorkerRssMiB": 251.36,
+    "largeAuditMs": 2280.66,
+    "largeWarmScanMs": 41.78,
+    "graphQueryMs": 0.78,
+    "rssHighWaterDeltaMiB": 16.68,
+    "heapUsedDeltaMiB": 4.95,
     "cancellationContained": true,
-    "activeProviderCancellationMs": 35.64,
+    "activeProviderCancellationMs": 36.28,
     "workerOomContained": true
   },
   "targets": {
@@ -82,13 +82,13 @@
     "note": "Targets are directional and never override deterministic findings, completeness, or containment."
   },
   "hashes": {
-    "code": "6d86c7e100e15d296fdd9a2f72d8cb5fab13954c0a039bc89ad6a6d19235f6f0",
+    "code": "dc0d0bc2472e98e6aca7831b618cc95fc3df89852f6e85a0cba48502aa008fb9",
     "corpus": "35bbedeb12c563cd8d7933fd13cf26ae0b75f8019ba4a27316782228e0f5e397",
-    "rules": "d2f9bcb4bbb9c18df671539c7f1aa2ba3415036bb7e8da71ad825c596d69e578",
-    "library": "269957342dd315bd24285d148b4d1b879b0c89bf2b6957d07ffcc3fd6a6796e7",
+    "rules": "dd05d49844357fce09b13cd27933eca203b0dd12c517c603df11134311520543",
+    "library": "1bb81b7837a296fa6767f1578fac592ca2c39f7be1938f8acb6903a79a2f191e",
     "schema": "0e4028c5de643e430e3bb8634b38f0bd5a1eefb87460f3a7ffb97d404939bf01",
     "package": "97628fbea9f8d8c27ecacb3562f289570b4f7371177bf81c5333ba734b6bfabd",
     "config": "f40bf8dfca68c87616330a3fe8265a85b7aa9637f03c9b8a1785e92e4fe8e9f5",
-    "runtime": "38bf291c23b6336ab253613d8093b51c5ad5805ba9bcc73fd5a27212a94fdb86"
+    "runtime": "81aaf46a3b933c8aa60c59d049df8955be73a4560fb32b93f1022f1a7522cb31"
   }
 }

@@ -1,6 +1,6 @@
 ---
 name: ai-slop-review
-description: Deeply adjudicates deterministic candidates for redundant wrappers, swallowed errors, hidden fallbacks, duplicate capabilities, and unresolved dependencies against callers, contracts, exports, and tests.
+description: Deeply adjudicates deterministic candidates for redundant wrappers, swallowed errors, hidden fallbacks, explicit placeholders, duplicate capabilities, unresolved dependencies, and import cycles against callers, contracts, exports, and tests.
 disable-model-invocation: true
 license: Apache-2.0
 compatibility: Requires the pi-ai-slop-review extension tools in the same Pi package.
@@ -64,6 +64,8 @@ Apply the checks relevant to the rule:
 - Pass-through wrapper: check exports, decorators, overloads, typing, dependency injection, compatibility, instrumentation, and non-call references.
 - Suppressed error or hidden fallback: check best-effort boundaries, retries, idempotency, cleanup, telemetry, optional data contracts, and caller handling.
 - Duplicate capability: compare signatures, side effects, dependencies, lifecycle, authorization boundary, and callers; similar bodies alone are insufficient.
+- Import cycle: classify runtime versus type-only and registration edges, then confirm only when repository evidence demonstrates harmful coupling or initialization-order risk.
+- Explicit placeholder: inspect callers, interfaces, subclasses, feature registration, and tests; preserve intentional unsupported-operation and abstract subclass contracts.
 - Unresolved dependency: check runtime builtins, import-to-distribution name mappings, workspace modules, optional/platform imports, inline dependency metadata, and generated/test-only files.
 
 Reject style-only claims, generic cleanup preferences, and any inference of AI authorship.

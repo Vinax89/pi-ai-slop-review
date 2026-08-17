@@ -121,6 +121,24 @@ test("distinguishes suppressed errors, hidden fallbacks, and rethrows", () => {
   assert.equal(findings.filter((finding) => finding.ruleId === "data.hidden-catch-fallback").length, 1);
 });
 
+test("reports explicit placeholder-only bodies without treating ordinary throws or declarations as stubs", () => {
+  const root = project({
+    "input.ts": [
+      "export function pending() { throw new Error('Not implemented yet'); }",
+      "export function rejected() { throw new Error('Invalid input'); }",
+      "export declare function external(): void;",
+      "abstract class Base { abstract execute(): void; }",
+    ].join("\n"),
+  });
+  const placeholders = scanTypeScriptFiles(root, ["input.ts"]).findings.filter(
+    (finding) => finding.ruleId === "structure.explicit-placeholder",
+  );
+  assert.equal(placeholders.length, 1);
+  assert.match(placeholders[0].message, /pending/);
+  assert.equal(placeholders[0].maximumAction, "observe");
+  assert.match(placeholders[0].unknown.join(" "), /unsupported-operation|subclass/);
+});
+
 test("skips generated and syntactically invalid files", () => {
   const root = project({
     "generated.ts": "// @generated\nexport const value = 1;\n",

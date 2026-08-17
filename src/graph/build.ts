@@ -16,6 +16,7 @@ const execFileAsync = promisify(execFile);
 const PYTHON_HELPER = fileURLToPath(new URL("../python_graph_helper.py", import.meta.url));
 const PYTHON_BATCH_SIZE = 500;
 const PYTHON_BATCH_CONCURRENCY = 2;
+const GRAPH_EXTRACTION_VERSION = 2;
 const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
 type GraphCacheRecord = { cacheHash: string; contentHash?: string };
 function pythonGraphCacheHash(contentHash: string): string {
@@ -224,7 +225,7 @@ function extractTypescript(
       const reusable = reusableByKey.get(key);
       const configured = reusable ? undefined : configForFiles(files, key === "<none>" ? undefined : key, groupFiles.length > files.length);
       const options = reusable?.options ?? configured!.options;
-      let compilerContext = JSON.stringify(options);
+      let compilerContext = `${GRAPH_EXTRACTION_VERSION}\0${JSON.stringify(options)}`;
       const contextPath = reusable?.configPath ?? (key === "<none>" || key.startsWith("<reusable:") ? undefined : key);
       if (contextPath) {
         try {
@@ -320,7 +321,10 @@ function extractTypescript(
           const targetId = resolved && normalizePath(path.resolve(resolved)).startsWith(`${normalizePath(rootDir)}/`)
             ? nodeId(normalizePath(path.relative(rootDir, resolved)), "file", normalizePath(path.relative(rootDir, resolved)))
             : fingerprint("graph-dependency", { specifier });
-          edges.push(edge(filePath, rootNode.id, targetId, "imports", resolved ? "C3" : "C2", { specifier, resolved: resolved ? normalizePath(path.relative(rootDir, resolved)) : undefined }));
+          const typeOnly = ts.isImportDeclaration(node)
+            ? Boolean(node.importClause?.isTypeOnly)
+            : node.isTypeOnly;
+          edges.push(edge(filePath, rootNode.id, targetId, "imports", resolved ? "C3" : "C2", { specifier, resolved: resolved ? normalizePath(path.relative(rootDir, resolved)) : undefined, typeOnly }));
         }
         if (ts.isCallExpression(node)) {
           const symbol = checker.getSymbolAtLocation(node.expression);

@@ -71,6 +71,8 @@ The scanner federates a TypeScript `Program`/`TypeChecker`, an isolated Python s
 - simple pass-through wrapper candidates
 - empty or log-only catch clauses
 - catch clauses returning safe-looking fallbacks
+- complete-scope runtime import-cycle candidates, with type-only edges retained as counterevidence
+- explicit placeholder-only function bodies, with unsupported-operation and subclass contracts left for adjudication
 
 Python wrapper findings remain observation-only because repository-wide dynamic references are not proven. Python imports guarded by `TYPE_CHECKING`, `ImportError`, or platform conditions are excluded. External analyzer fixes are retained only as evidence.
 

@@ -453,6 +453,39 @@ function scanCatchClauses(sourceFile: ts.SourceFile, sourceHash: string, root: s
   return findings;
 }
 
+function scanExplicitPlaceholders(sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
+  const findings: FindingDraft[] = [];
+  const visit = (node: ts.Node): void => {
+    const functionNode = ts.isFunctionLike(node) ? node as ts.FunctionLikeDeclaration : undefined;
+    const body = functionNode?.body;
+    if (body && ts.isBlock(body) && body.statements.length === 1) {
+      const statement = body.statements[0];
+      const expression = ts.isThrowStatement(statement) ? statement.expression : undefined;
+      const message = expression && ts.isNewExpression(expression) && expression.expression.getText(sourceFile) === "Error"
+        ? expression.arguments?.[0]
+        : undefined;
+      if (message && ts.isStringLiteralLike(message) && /\b(?:not implemented|todo|placeholder)\b/i.test(message.text)) {
+        const name = (functionNode?.name && ts.isIdentifier(functionNode.name) ? functionNode.name.text : undefined) ?? "anonymous function";
+        findings.push(finding(sourceFile, sourceHash, root, statement, {
+          anchor: structuralAnchor(node, "explicit-placeholder"),
+          ruleId: "structure.explicit-placeholder",
+          classification: "context_conflict",
+          confidence: "C2",
+          risk: "R2",
+          maximumAction: "observe",
+          message: `Function '${name}' has an explicit placeholder-only implementation`,
+          evidence: ["AST confirms the entire function body is a throw with an explicit placeholder marker"],
+          counterEvidence: [],
+          unknown: ["the placeholder may be an intentional unsupported-operation or subclass contract"],
+        }));
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return findings;
+}
+
 function scanImports(project: Project, sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
   const findings: FindingDraft[] = [];
   const semanticDiagnostics = project.program.getSemanticDiagnostics(sourceFile);
@@ -618,6 +651,8 @@ function scanTypeScriptBatch(state: ScanAccumulator, key: string, files: string[
     if (findings.length < maxFindings) {
       const remaining = maxFindings - findings.length;
       findings.push(...scanCatchClauses(sourceFile, sourceHash, root).slice(0, remaining));
+      const placeholderRemaining = maxFindings - findings.length;
+      findings.push(...scanExplicitPlaceholders(sourceFile, sourceHash, root).slice(0, placeholderRemaining));
     }
   }
 
