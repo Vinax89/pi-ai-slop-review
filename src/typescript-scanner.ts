@@ -455,10 +455,14 @@ function scanCatchClauses(sourceFile: ts.SourceFile, sourceHash: string, root: s
 
 function scanExplicitPlaceholders(sourceFile: ts.SourceFile, sourceHash: string, root: string): FindingDraft[] {
   const findings: FindingDraft[] = [];
+  const safeLabel = (value: string, maxLength = 120): string => {
+    const printable = value.replace(/[\u0000-\u001f\u007f]/g, "?");
+    return printable.length <= maxLength ? printable : `${printable.slice(0, maxLength - 1)}…`;
+  };
   const displayName = (node: ts.FunctionLikeDeclaration): string => {
-    if (node.name && ts.isIdentifier(node.name)) return node.name.text;
-    if (ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) return node.parent.name.text;
-    if (ts.isPropertyAssignment(node.parent) && (ts.isIdentifier(node.parent.name) || ts.isStringLiteralLike(node.parent.name))) return node.parent.name.text;
+    if (node.name && ts.isIdentifier(node.name)) return safeLabel(node.name.text);
+    if (ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) return safeLabel(node.parent.name.text);
+    if (ts.isPropertyAssignment(node.parent) && (ts.isIdentifier(node.parent.name) || ts.isStringLiteralLike(node.parent.name))) return safeLabel(node.parent.name.text);
     return "anonymous function";
   };
   const visit = (node: ts.Node): void => {

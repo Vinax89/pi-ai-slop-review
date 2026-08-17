@@ -20,8 +20,8 @@ test("import cycle analysis is stable, bounded to resolved files, and ignores ac
   const external: GraphNode = { ...file("external"), id: "external", kind: "external" };
   const result = importCycles([c, external, a, b], [imports(c, a), imports(b, c), imports(a, b), imports(a, external)]);
   assert.deepEqual(result.map((cycle) => cycle.files), [["src/a.ts", "src/b.ts", "src/c.ts"]]);
-  assert.equal(result[0]?.edgeIds.length, 3);
-  assert.deepEqual(result[0]?.typeOnlyEdgeIds, []);
+  assert.equal(result[0]?.edgeCount, 3);
+  assert.equal(result[0]?.typeOnlyEdgeCount, 0);
 });
 
 test("import cycle analysis retains type-only edge provenance", () => {
@@ -29,7 +29,21 @@ test("import cycle analysis retains type-only edge provenance", () => {
   const b = file("src/b.ts");
   const typeEdge = { ...imports(a, b), metadata: { typeOnly: true } };
   const result = importCycles([a, b], [typeEdge, imports(b, a)]);
-  assert.deepEqual(result[0]?.typeOnlyEdgeIds, [typeEdge.id]);
+  assert.equal(result[0]?.typeOnlyEdgeCount, 1);
+});
+
+test("import cycle analysis summarizes high-multiplicity edges as counts", () => {
+  const a = file("src/a.ts");
+  const b = file("src/b.ts");
+  const parallel = Array.from({ length: 10_000 }, (_, index) => ({
+    ...imports(a, b),
+    id: `parallel-${index}`,
+    metadata: { typeOnly: index % 2 === 0 },
+  }));
+  const [cycle] = importCycles([a, b], [...parallel, imports(b, a)]);
+  assert.equal(cycle?.edgeCount, 10_001);
+  assert.equal(cycle?.typeOnlyEdgeCount, 5_000);
+  assert.deepEqual(Object.keys(cycle ?? {}).sort(), ["edgeCount", "files", "typeOnlyEdgeCount"]);
 });
 
 test("import cycle analysis detects self-imports and omits ordinary DAGs", () => {

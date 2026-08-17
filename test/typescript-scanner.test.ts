@@ -141,6 +141,20 @@ test("reports explicit placeholder-only bodies without treating ordinary throws 
   assert.match(placeholders[0].unknown.join(" "), /unsupported-operation|subclass/);
 });
 
+test("bounds and sanitizes source-controlled placeholder names", () => {
+  const hostileName = `forged\\n${"x".repeat(300)}`;
+  const root = project({
+    "input.ts": `export const handlers = { "${hostileName}": () => { throw new Error('Not implemented'); } };\n`,
+  });
+  const placeholder = scanTypeScriptFiles(root, ["input.ts"]).findings.find(
+    (finding) => finding.ruleId === "structure.explicit-placeholder",
+  );
+  assert.ok(placeholder);
+  assert.equal(/[\n\r\u0000-\u001f\u007f]/.test(placeholder.message), false);
+  assert.ok(placeholder.message.length < 190);
+  assert.match(placeholder.message, /…/);
+});
+
 test("skips generated and syntactically invalid files", () => {
   const root = project({
     "generated.ts": "// @generated\nexport const value = 1;\n",

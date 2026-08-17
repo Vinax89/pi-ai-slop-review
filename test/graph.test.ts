@@ -83,7 +83,8 @@ test("repository graph reports runtime import cycles only for complete repositor
   const repository = await collectGraphEvidence(root, paths, config, undefined, state, "repository");
   const cycle = repository.findings.find((item) => item.ruleId === "dependency.import-cycle");
   assert.ok(cycle);
-  assert.match(cycle.message, /src\/a\.ts -> src\/b\.ts/);
+  assert.match(cycle.message, /strongly connected set/);
+  assert.match(cycle.message, /src\/a\.ts, src\/b\.ts/);
 
   writeFileSync(path.join(root, "src/a.ts"), "import type { B } from './b.js';\nexport interface A { b?: B }\n");
   writeFileSync(path.join(root, "src/b.ts"), "import type { A } from './a.js';\nexport interface B { a?: A }\n");
@@ -101,15 +102,24 @@ test("repository graph reports runtime import cycles only for complete repositor
   assert.ok(mixed.findings.some((item) => item.ruleId === "dependency.import-cycle"));
 });
 
-test("repository cycle analysis excludes retained graph facts outside the current scope", async () => {
+test("partial scans preserve unseen graph facts while complete scans prune them", async () => {
   const { root, state, config } = fixture();
   writeFileSync(path.join(root, "src/a.ts"), "import { b } from './b.js';\nexport const a = b;\n");
   writeFileSync(path.join(root, "src/b.ts"), "import { a } from './a.js';\nexport const b = a;\n");
   writeFileSync(path.join(root, "src/current.ts"), "export const current = 1;\n");
   const initial = await collectGraphEvidence(root, ["src/a.ts", "src/b.ts"], config, undefined, state, "repository");
   assert.ok(initial.findings.some((item) => item.ruleId === "dependency.import-cycle"));
-  const narrowed = await collectGraphEvidence(root, ["src/current.ts"], config, undefined, state, "repository");
-  assert.equal(narrowed.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+  const partial = await collectGraphEvidence(root, ["src/current.ts"], config, undefined, state, "explicit");
+  assert.equal(partial.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+  const retained = new GraphStore(root, state);
+  assert.deepEqual(retained.files(), ["src/a.ts", "src/b.ts", "src/current.ts"]);
+  retained.close();
+
+  const complete = await collectGraphEvidence(root, ["src/current.ts"], config, undefined, state, "repository");
+  assert.equal(complete.findings.some((item) => item.ruleId === "dependency.import-cycle"), false);
+  const converged = new GraphStore(root, state);
+  assert.deepEqual(converged.files(), ["src/current.ts"]);
+  converged.close();
 });
 
 test("graph batches parse each TypeScript project once and persist in one transaction", async () => {

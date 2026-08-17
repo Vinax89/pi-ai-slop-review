@@ -39,7 +39,7 @@ rules:
     ai_relation: none
     risk: R2
     confidence_cap: C2
-    claim: Resolved file imports form a strongly connected component that may create coupling or initialization-order risk.
+    claim: Resolved file imports place multiple files in one strongly connected component that may create coupling or initialization-order risk; displayed members do not assert one traversal order.
     vetoes: [type-only-cycle, intentional-registration-cycle, generated-code, documented-package-boundary]
     maximum_action: observe
     remediation_steps:

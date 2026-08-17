@@ -148,6 +148,9 @@ export async function collectGraphEvidence(
       .map(([filePath]) => filePath);
     store.removeFiles([...new Set([...invalidFiles, ...missingFiles])]);
     const reviewedFiles = new Set([...changedFiles, ...built.cachedFiles].sort());
+    if (mode === "repository" && skipped.length === 0) {
+      store.removeFiles(store.files().filter((filePath) => !reviewedFiles.has(filePath)));
+    }
     const affectedFiles = new Set([...changedFiles, ...invalidFiles, ...missingFiles]);
     const beforeSurface = beforeCandidates.filter((entry) => affectedFiles.has(entry.filePath));
     const reportedCloneGroups = new Set<string>();
@@ -156,7 +159,7 @@ export async function collectGraphEvidence(
       const allNodes = store.fileNodes().filter((node) => reviewedFiles.has(node.filePath));
       const scopedEdges = store.importEdges().filter((edge) => reviewedFiles.has(edge.filePath));
       for (const cycle of importCycles(allNodes, scopedEdges)) {
-        if (cycle.typeOnlyEdgeIds.length === cycle.edgeIds.length) continue;
+        if (cycle.typeOnlyEdgeCount === cycle.edgeCount) continue;
         if (findings.length >= config.limits.maxFindings) break;
         const representative = allNodes.find((node) => node.kind === "file" && node.filePath === cycle.files[0]);
         if (!representative) continue;
@@ -167,11 +170,11 @@ export async function collectGraphEvidence(
           confidence: "C2",
           risk: "R2",
           maximumAction: "observe",
-          message: `Resolved imports form a cycle across ${cycle.files.length} file(s): ${formatImportCycle(cycle.files)}`,
+          message: `Resolved imports form a strongly connected set across ${cycle.files.length} file(s); members: ${formatImportCycle(cycle.files)}`,
           evidence: ["complete repository graph contains a strongly connected component with at least one runtime import"],
           counterEvidence: ["some cycles are intentional registration, compatibility, or package-boundary arrangements"],
-          unknown: cycle.typeOnlyEdgeIds.length
-            ? [`${cycle.typeOnlyEdgeIds.length} edge(s) are type-only; runtime initialization impact requires contextual review`]
+          unknown: cycle.typeOnlyEdgeCount
+            ? [`${cycle.typeOnlyEdgeCount} edge(s) are type-only; runtime initialization impact requires contextual review`]
             : ["runtime initialization order and module side effects require contextual review"],
         });
         if (finding) findings.push(finding);

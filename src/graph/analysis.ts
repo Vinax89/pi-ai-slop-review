@@ -2,8 +2,8 @@ import type { GraphEdge, GraphNode } from "./types.ts";
 
 export interface ImportCycle {
   files: string[];
-  edgeIds: string[];
-  typeOnlyEdgeIds: string[];
+  edgeCount: number;
+  typeOnlyEdgeCount: number;
 }
 
 function safePathLabel(value: string, maxLength = 120): string {
@@ -14,7 +14,7 @@ function safePathLabel(value: string, maxLength = 120): string {
 export function formatImportCycle(files: string[], maxFiles = 8): string {
   const shown = files.slice(0, maxFiles).map((file) => safePathLabel(file));
   const omitted = Math.max(0, files.length - shown.length);
-  return `${shown.join(" -> ")}${omitted ? ` (+${omitted} more)` : ""}`;
+  return `${shown.join(", ")}${omitted ? ` (+${omitted} more)` : ""}`;
 }
 
 /**
@@ -23,19 +23,20 @@ export function formatImportCycle(files: string[], maxFiles = 8): string {
  */
 export function importCycles(nodes: GraphNode[], edges: GraphEdge[]): ImportCycle[] {
   const filesById = new Map(nodes.filter((node) => node.kind === "file").map((node) => [node.id, node.filePath]));
-  const adjacency = new Map<string, Array<{ to: string; edgeId: string }>>();
+  const adjacency = new Map<string, Array<{ to: string; typeOnly: boolean }>>();
   const reverse = new Map<string, string[]>();
-  const typeOnlyIds = new Set(edges.filter((edge) => edge.metadata.typeOnly === true).map((edge) => edge.id));
   for (const edge of edges) {
     if (edge.kind !== "imports" || !filesById.has(edge.fromId) || !filesById.has(edge.toId)) continue;
     const outgoing = adjacency.get(edge.fromId) ?? [];
-    outgoing.push({ to: edge.toId, edgeId: edge.id });
+    outgoing.push({ to: edge.toId, typeOnly: edge.metadata.typeOnly === true });
     adjacency.set(edge.fromId, outgoing);
     const incoming = reverse.get(edge.toId) ?? [];
     incoming.push(edge.fromId);
     reverse.set(edge.toId, incoming);
   }
-  for (const outgoing of adjacency.values()) outgoing.sort((left, right) => left.to.localeCompare(right.to) || left.edgeId.localeCompare(right.edgeId));
+  for (const outgoing of adjacency.values()) {
+    outgoing.sort((left, right) => left.to.localeCompare(right.to) || Number(left.typeOnly) - Number(right.typeOnly));
+  }
   for (const incoming of reverse.values()) incoming.sort();
 
   const visited = new Set<string>();
@@ -83,11 +84,8 @@ export function importCycles(nodes: GraphNode[], edges: GraphEdge[]): ImportCycl
     if (component.length === 1 && !internalEdges.some((edge) => edge.to === component[0])) return [];
     return [{
       files: component.map((id) => filesById.get(id)!).sort(),
-      edgeIds: internalEdges.map((edge) => edge.edgeId).sort(),
-      typeOnlyEdgeIds: internalEdges
-        .filter((edge) => typeOnlyIds.has(edge.edgeId))
-        .map((edge) => edge.edgeId)
-        .sort(),
+      edgeCount: internalEdges.length,
+      typeOnlyEdgeCount: internalEdges.filter((edge) => edge.typeOnly).length,
     }];
   }).sort((left, right) => left.files.join("\0").localeCompare(right.files.join("\0")));
 }

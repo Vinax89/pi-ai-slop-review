@@ -26,6 +26,9 @@ test("skill keeps conservative evidence policy and explicit repository aliases",
   assert.match(skill, /Matching signatures and bodies establish duplication, not by themselves a maintenance problem/);
   assert.match(skill, /Evidence IDs are finding-scoped/);
   assert.match(skill, /Missing static edges are not proof of no callers/);
+  assert.match(skill, /Import cycle: classify runtime versus type-only and registration edges/);
+  assert.match(skill, /Explicit placeholder: inspect callers, interfaces, subclasses, feature registration, and tests/);
+  assert.doesNotMatch(skill, /deslop-js|karpeslop|lintmax|vibecheck/i);
   assert.doesNotMatch(skill, /Confirm an unexported identity wrapper with no discovered callers/);
 });
 

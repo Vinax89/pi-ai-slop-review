@@ -7,6 +7,10 @@
 - Detect explicit placeholder-only TypeScript/JavaScript function bodies as context-dependent observations.
 - Harden graph analysis against per-specifier type imports, stale out-of-scope facts, deep graphs, control-character paths, and oversized cycle summaries.
 - Add indexed cycle queries, actionable arrow-function names, and positive/hard-negative placeholder evaluation cases.
+- Make complete clean repository scans prune stale graph facts while partial and explicit scans preserve unobserved state.
+- Store cycle edge provenance as bounded counts instead of potentially large identifier arrays.
+- Render cycle membership without implying a traversal order and sanitize source-controlled placeholder names in diagnostics.
+- Add release-facing skill assertions for conservative cycle and placeholder adjudication without third-party branding.
 
 ## 2.0.1
 
