@@ -1,6 +1,6 @@
 {
   "name": "pi-ai-slop-review",
-  "version": "1.7.0",
+  "version": "2.0.0",
   "description": "Evidence-backed review of AI-assisted TypeScript, JavaScript, and Python changes for Pi",
   "license": "Apache-2.0",
   "type": "module",
@@ -42,6 +42,7 @@
     "scripts",
     "docs",
     "artifacts",
+    "CHANGELOG.md",
     "!artifacts/verdict-corpus",
     "README.md",
     "tsconfig.json",
@@ -53,6 +54,7 @@
     "build": "npm run typecheck && npm run compile",
     "compile": "node scripts/prepare-dist.mjs && tsc -p tsconfig.build.json",
     "evaluate": "node --experimental-strip-types --experimental-transform-types src/evaluation/cli.ts",
+    "evaluate:e2e": "node --experimental-strip-types --experimental-transform-types src/evaluation/harness-cli.ts",
     "lifecycle": "node scripts/lifecycle.mjs",
     "prepare": "npm run compile",
     "test": "node --experimental-strip-types --experimental-transform-types --test test/*.test.ts",

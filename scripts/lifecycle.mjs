@@ -133,7 +133,7 @@ function install(source, root, target) {
   try {
     copyPackage(resolvedSource, stage);
     const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-    const installed = spawnSync(npm, ["ci", "--ignore-scripts", "--omit=dev", "--no-audit"], {
+    const installed = spawnSync(npm, ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-package-lock"], {
       cwd: stage,
       encoding: "utf8",
       stdio: "pipe",

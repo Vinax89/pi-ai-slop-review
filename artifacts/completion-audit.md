@@ -6,7 +6,7 @@ Updated: 2026-08-04T08:14:39Z
 
 This audit covers the v1 implementation in this package. The extension reviews concrete code-quality and assurance evidence; it does not infer AI authorship from style, metadata, names, comments, or architecture. Review is read-only and current-session scoped by default. Repository audit, project tools, network providers, critics, formal engines, and source application are explicit gated operations.
 
-The implementation is versioned `1.2.1`. Development and verification used only isolated fixtures outside reviewed user repositories.
+The implementation is versioned `2.0.0`. Development and verification used only isolated fixtures outside reviewed user repositories.
 
 ## Requirement-to-evidence map
 

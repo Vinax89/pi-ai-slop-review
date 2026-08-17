@@ -38,16 +38,17 @@ function draft(overrides: Partial<FindingDraft> = {}): FindingDraft {
   };
 }
 
-function resultWith(root: string, findings: FindingDraft[]) {
+function resultWith(root: string, findings: FindingDraft[], mode: "session" | "explicit" | "delta" | "repository" = "session", scannedFiles = ["input.ts"]) {
   return createScanResult({
     engine: "provider-federation",
     engineVersion: "1",
     rootDir: root,
     providerId: "test",
     providerVersion: "1",
-    scannedFiles: ["input.ts"],
+    scannedFiles,
     findings,
     skipped: [],
+    mode,
   });
 }
 
@@ -69,6 +70,18 @@ test("verdict line parser accepts the contract and reports structural violations
   assert.match(broken.violations[0], /duplicate verdict/);
   assert.match(broken.violations[1], /unparseable verdict line/);
   assert.equal(broken.verdicts.length, 2);
+});
+
+test("unchanged finding source is invalidated when caller context changes", () => {
+  const root = fixture();
+  const stateRoot = path.join(root, "state");
+  writeFileSync(path.join(root, "caller.ts"), "export const used = value();\n");
+  const first = resultWith(root, [draft()], "repository", ["input.ts", "caller.ts"]);
+  recordVerdicts(root, first, [{ findingId: first.findings[0].id, verdict: "dismissed", rationale: "public caller uses wrapper" }], stateRoot);
+  writeFileSync(path.join(root, "caller.ts"), "export const used = 1;\n");
+  const second = resultWith(root, [draft()], "repository", ["input.ts", "caller.ts"]);
+  assert.equal(first.findings[0].sourceHash, second.findings[0].sourceHash);
+  assert.equal(classifyVerdicts(root, second, verdictLedger(root, stateRoot)).findings[0].classification.status, "context-changed");
 });
 
 test("verdict verification catches unknown IDs, mismatches, and count drift", () => {
@@ -97,7 +110,7 @@ test("verdict verification catches unknown IDs, mismatches, and count drift", ()
   assert.match(drift.violations[0], /verdict count 0 does not match adjudicated total 2/);
 });
 
-test("verdict ledger records, classifies new/same/stale, and resolves missing findings", () => {
+test("verdict ledger uses context fingerprints and scope-aware resolution", () => {
   const root = fixture();
   const stateRoot = path.join(root, "state");
   const result = resultWith(root, [draft()]);
@@ -110,18 +123,24 @@ test("verdict ledger records, classifies new/same/stale, and resolves missing fi
   assert.equal(ledger[0].verdict, "confirmed");
   assert.equal(ledger[0].findingId, finding.id);
 
-  let delta = classifyVerdicts(result.findings, verdictLedger(root, stateRoot));
-  assert.equal(delta.findings[0].classification.status, "same");
+  let delta = classifyVerdicts(root, result, verdictLedger(root, stateRoot));
+  assert.equal(delta.findings[0].classification.status, "reusable");
   assert.equal(delta.resolved.length, 0);
 
   const changed = resultWith(root, [draft({ sourceHash: "hash-v2" })]);
-  delta = classifyVerdicts(changed.findings, verdictLedger(root, stateRoot));
-  assert.equal(delta.findings[0].classification.status, "stale");
+  delta = classifyVerdicts(root, changed, verdictLedger(root, stateRoot));
+  assert.equal(delta.findings[0].classification.status, "context-changed");
 
   const empty = resultWith(root, []);
-  delta = classifyVerdicts(empty.findings, verdictLedger(root, stateRoot));
+  delta = classifyVerdicts(root, empty, verdictLedger(root, stateRoot));
   assert.equal(delta.findings.length, 0);
+  assert.equal(delta.resolved.length, 0);
+  assert.equal(delta.notObserved.length, 1);
+
+  const full = resultWith(root, [], "repository");
+  delta = classifyVerdicts(root, full, verdictLedger(root, stateRoot));
   assert.equal(delta.resolved.length, 1);
+  assert.equal(delta.notObserved.length, 0);
 });
 
 test("verdict recording replaces prior verdicts per finding and rejects bad input", () => {
@@ -214,11 +233,11 @@ test("verdict manifest serializes the delta and writes atomically", () => {
   const finding = result.findings[0];
   recordVerdicts(root, result, [{ findingId: finding.id, verdict: "confirmed", evidence: "redundant wrapper" }], stateRoot);
 
-  const delta = classifyVerdicts(result.findings, verdictLedger(root, stateRoot));
+  const delta = classifyVerdicts(root, result, verdictLedger(root, stateRoot));
   const manifest = verdictManifest(result, delta);
   assert.equal(manifest.candidates, 1);
   assert.equal(manifest.adjudicated.length, 1);
-  assert.equal(manifest.adjudicated[0].status, "same");
+  assert.equal(manifest.adjudicated[0].status, "reusable");
   assert.equal(manifest.adjudicated[0].verdict, "confirmed");
   assert.equal(manifest.scanId, result.scanId);
 

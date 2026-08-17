@@ -1,7 +1,6 @@
 import json
 
-# Pair 5: missing dependency vs optional/platform dependency.
-# Member A (expected: confirmed) — imported but never declared anywhere.
+# Dependency resolution cases.
 import requests
 
 
@@ -9,7 +8,6 @@ def call_api():
     return requests.get("https://api.example.test")
 
 
-# Member B (expected: dismissed) — optional import with graceful degradation.
 try:
     import orjson
 except ImportError:

@@ -1,17 +1,17 @@
 {
-  "generatedAt": "2026-08-05T03:37:13.879Z",
+  "generatedAt": "2026-08-17T06:16:56.067Z",
   "runtime": {
-    "node": "v24.18.0",
+    "node": "v24.19.0",
     "nodeVersions": {
-      "node": "24.18.0",
-      "acorn": "8.16.0",
+      "node": "24.19.0",
+      "acorn": "8.17.0",
       "ada": "3.4.4",
-      "amaro": "1.1.9",
+      "amaro": "1.1.10",
       "ares": "1.34.6",
       "brotli": "1.2.0",
       "cldr": "48.0",
       "icu": "78.3",
-      "llhttp": "9.4.2",
+      "llhttp": "9.4.3",
       "merve": "1.2.2",
       "modules": "137",
       "napi": "10",
@@ -23,19 +23,19 @@
       "openssl": "3.5.7",
       "simdjson": "4.6.4",
       "simdutf": "6.4.0",
-      "sqlite": "3.53.1",
+      "sqlite": "3.53.3",
       "tz": "2026b",
-      "undici": "7.28.0",
+      "undici": "7.29.0",
       "unicode": "17.0",
       "uv": "1.52.1",
       "uvwasi": "0.0.23",
-      "v8": "13.6.233.17-node.50",
-      "zlib": "1.3.1-e00f703",
+      "v8": "13.6.233.17-node.51",
+      "zlib": "1.3.2.1-motley-3246f1b",
       "zstd": "1.5.7"
     },
     "python": {
       "executable": "python3",
-      "version": "Python 3.12.3"
+      "version": "Python 3.14.7"
     },
     "platform": "linux",
     "arch": "x64"
@@ -47,22 +47,22 @@
     "graphResults": 1
   },
   "measurements": {
-    "coldScanMs": 806.85,
-    "recycledColdScanMs": 673.44,
-    "changedFileScanMs": 382.79,
-    "warmScanP50Ms": 1.81,
-    "warmScanP95Ms": 2.29,
+    "coldScanMs": 533.55,
+    "recycledColdScanMs": 500.82,
+    "changedFileScanMs": 357.4,
+    "warmScanP50Ms": 1.72,
+    "warmScanP95Ms": 2.11,
     "warmCacheHitRate": 1,
-    "warmWorkerCpuP50Ms": 1.93,
-    "coldWorkerHeapUsedMiB": 20.43,
-    "coldWorkerRssMiB": 245.38,
-    "largeAuditMs": 1182.01,
-    "largeWarmScanMs": 38.15,
-    "graphQueryMs": 0.76,
-    "rssHighWaterDeltaMiB": 12.61,
-    "heapUsedDeltaMiB": 4.01,
+    "warmWorkerCpuP50Ms": 1.73,
+    "coldWorkerHeapUsedMiB": 20.03,
+    "coldWorkerRssMiB": 216.73,
+    "largeAuditMs": 2319.71,
+    "largeWarmScanMs": 39.37,
+    "graphQueryMs": 0.99,
+    "rssHighWaterDeltaMiB": 14.23,
+    "heapUsedDeltaMiB": 5.03,
     "cancellationContained": true,
-    "activeProviderCancellationMs": 37.08,
+    "activeProviderCancellationMs": 36.84,
     "workerOomContained": true
   },
   "targets": {
@@ -82,13 +82,13 @@
     "note": "Targets are directional and never override deterministic findings, completeness, or containment."
   },
   "hashes": {
-    "code": "4abb5a8e3708c9c301b55452d76bd75e9e910b26437a9bcb645dac116f4bce87",
-    "corpus": "4d9e4c41192471d211936a5d5110d55e958c44aea894e1d6942407373a33290c",
+    "code": "dc22bf75b6833c49332ea33bfbbfbd11f24c8a92f167c4d8583dd0f182306715",
+    "corpus": "35bbedeb12c563cd8d7933fd13cf26ae0b75f8019ba4a27316782228e0f5e397",
     "rules": "d2f9bcb4bbb9c18df671539c7f1aa2ba3415036bb7e8da71ad825c596d69e578",
-    "library": "355972a3f8de464e6300c240e1c86687e3edb36aa81426b2879845efe5fb9e82",
-    "schema": "ce8218855a0a835bc9a6eebb02089a9b1824c01e5158d3b83eec780d133cbece",
-    "package": "95ce88a489faa9a879b9586254c88b1c59c095a534daa9061ad2525bc400a0dd",
-    "config": "cc333bdfa67ba261ca5e713a932b32f65f3b650023591b51b0609cfe4c6f1c3b",
-    "runtime": "6c68f3a1a23a146c26cb909a41534564123d13a5bc466baf4d727226caf66dec"
+    "library": "269957342dd315bd24285d148b4d1b879b0c89bf2b6957d07ffcc3fd6a6796e7",
+    "schema": "0e4028c5de643e430e3bb8634b38f0bd5a1eefb87460f3a7ffb97d404939bf01",
+    "package": "516ffb985137a6f41453129f306e9e5036721cc578b5497754050fe34e2f4b33",
+    "config": "f40bf8dfca68c87616330a3fe8265a85b7aa9637f03c9b8a1785e92e4fe8e9f5",
+    "runtime": "38bf291c23b6336ab253613d8093b51c5ad5805ba9bcc73fd5a27212a94fdb86"
   }
 }

@@ -78,6 +78,15 @@ function validateState(value: unknown, repositoryId: string): PersistedState {
     typeof record.verdict === "string" && validVerdicts.has(record.verdict) &&
     typeof record.evidence === "string" && typeof record.scanId === "string" &&
     typeof record.createdAt === "string" && typeof record.repositoryId === "string");
+  candidate.verdicts = candidate.verdicts.map((record) => ({
+    ...record,
+    // v1 records did not capture adjudication context and must never be reused.
+    adjudicationContextFingerprint: typeof record.adjudicationContextFingerprint === "string"
+      ? record.adjudicationContextFingerprint
+      : "legacy:source-only",
+    scanScope: record.scanScope ?? { mode: "session", contentHash: "legacy", paths: [record.filePath] },
+    evidenceIds: Array.isArray(record.evidenceIds) ? record.evidenceIds.filter((item) => typeof item === "string") : [],
+  }));
   const migrateScan = (scan: PersistedState["baselines"][string]): void => {
     if (!isScanResult(scan)) throw new Error("state contains an invalid persisted scan result");
     scan.suppressedFindings ??= [];

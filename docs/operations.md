@@ -1,5 +1,7 @@
 # Operations
 
+Run `npm run release:check` for the local build, test, deterministic evaluation, audit, documentation, and package dry-run gate. Set `REQUIRE_NPM_AUTH=1` when using the same gate immediately before an npm publish.
+
 ## Runtime requirements
 
 - Node.js 22.7 or newer; Node 24 is tested. The evaluation, benchmark, and test scripts use `--experimental-strip-types --experimental-transform-types`.

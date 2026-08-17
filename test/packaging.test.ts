@@ -9,15 +9,19 @@ interface PackedFile {
   path: string;
 }
 
+function firstPackResult(output: string): { files?: PackedFile[]; filename?: string } | undefined {
+  const parsed = JSON.parse(output) as Array<{ files?: PackedFile[]; filename?: string }> | Record<string, { files?: PackedFile[]; filename?: string }>;
+  return Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
+}
+
 function packedFiles(): string[] {
   const output = execFileSync("npm", ["pack", "--ignore-scripts", "--dry-run", "--json"], { encoding: "utf8" });
-  const rows = JSON.parse(output) as Array<{ files: PackedFile[] }>;
-  return rows[0]?.files.map((item) => item.path) ?? [];
+  return firstPackResult(output)?.files?.map((item) => item.path) ?? [];
 }
 
 test("npm pack contains runtime, schema, documentation, and metadata artifacts", () => {
   const files = packedFiles();
-  for (const required of ["dist/src/isolated-scan.js", "dist/src/python_common.py", "index.ts", "skills/ai-slop-review/SKILL.md", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "schema/config.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md", "npm-shrinkwrap.json"]) {
+  for (const required of ["dist/src/isolated-scan.js", "dist/src/python_common.py", "index.ts", "skills/ai-slop-review/SKILL.md", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "schema/config.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md"]) {
     assert.ok(files.includes(required), `packed package is missing ${required}`);
   }
   assert.equal(files.some((file) => file.startsWith("test/")), false);
@@ -44,8 +48,7 @@ test("packed evaluation module imports and loads the bundled corpus", () => {
   const destination = mkdtempSync(path.join(tmpdir(), "ai-slop-pack-"));
   try {
     const packOutput = execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", destination], { encoding: "utf8" });
-    const rows = JSON.parse(packOutput) as Array<{ filename: string }>;
-    const archive = rows[0]?.filename;
+    const archive = firstPackResult(packOutput)?.filename;
     assert.ok(archive);
     execFileSync("tar", ["-xzf", path.join(destination, archive)], { cwd: destination });
     const extracted = path.join(destination, "package");
@@ -62,13 +65,14 @@ test("packed compiled worker scans TypeScript and Python from node_modules", () 
   const destination = mkdtempSync(path.join(tmpdir(), "ai-slop-entrypoint-pack-"));
   try {
     const packOutput = execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", destination], { encoding: "utf8" });
-    const rows = JSON.parse(packOutput) as Array<{ filename: string }>;
-    const archive = rows[0]?.filename;
+    const archive = firstPackResult(packOutput)?.filename;
     assert.ok(archive);
     const extracted = path.join(destination, "node_modules", "pi-ai-slop-review");
     mkdirSync(extracted, { recursive: true });
     execFileSync("tar", ["-xzf", path.join(destination, archive), "--strip-components=1", "-C", extracted]);
-    execFileSync("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit"], { cwd: extracted, stdio: "ignore" });
+    // npm 12 excludes shrinkwrap metadata from published tarballs; install the
+    // exact production dependency declared by the packed manifest.
+    execFileSync("npm", ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-package-lock"], { cwd: extracted, stdio: "ignore" });
     writeFileSync(path.join(extracted, "input.ts"), "export const value = 1;\n");
     writeFileSync(path.join(extracted, "input.py"), "value = 1\n");
     // Runtime imports exercise the extracted package rather than this test module's source tree.

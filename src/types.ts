@@ -355,8 +355,11 @@ export interface VerdictRecord {
   line: number;
   anchor: string;
   sourceHash: string;
+  adjudicationContextFingerprint: string;
+  scanScope: Pick<ScanScope, "mode" | "contentHash" | "paths">;
   verdict: Verdict;
   evidence: string;
+  evidenceIds: string[];
   scanId: string;
   createdAt: string;
   repositoryId: string;
