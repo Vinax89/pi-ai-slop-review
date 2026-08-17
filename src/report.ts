@@ -125,24 +125,34 @@ export interface FindingQueuePage {
   offset: number;
   representatives: boolean;
   reportOnlyOmitted: number;
+  alreadyAdjudicated: number;
   findings: RankedFinding[];
 }
 
 export function createFindingQueue(
   result: ScanResult,
-  options: { offset?: number; limit?: number; representatives?: boolean; reportOnly?: readonly string[] } = {},
+  options: {
+    offset?: number;
+    limit?: number;
+    representatives?: boolean;
+    reportOnly?: readonly string[];
+    excludeFindingIds?: ReadonlySet<string>;
+  } = {},
 ): FindingQueuePage {
   const ranked = rankFindings(result.findings, result.policyDecisions);
   const reportOnly = new Set(options.reportOnly ?? []);
   const eligible = reportOnly.size ? ranked.filter((item) => !reportOnly.has(item.finding.ruleId)) : ranked;
   const seenRules = new Set<string>();
-  const queue = options.representatives
+  const selected = options.representatives
     ? eligible.filter((item) => {
         if (seenRules.has(item.finding.ruleId)) return false;
         seenRules.add(item.finding.ruleId);
         return true;
       })
     : eligible;
+  const queue = options.excludeFindingIds?.size
+    ? selected.filter((item) => !options.excludeFindingIds!.has(item.finding.id))
+    : selected;
   const requestedOffset = options.offset ?? 0;
   const requestedLimit = options.limit ?? 20;
   const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.trunc(requestedOffset)) : 0;
@@ -150,10 +160,11 @@ export function createFindingQueue(
   const findings = queue.slice(offset, offset + limit);
   const completeness = result.completeness ?? assessScanCompleteness(result);
   const reportOnlyOmitted = ranked.length - eligible.length;
+  const alreadyAdjudicated = selected.length - queue.length;
   const lines = [
     "AI-SLOP FINDING QUEUE",
     `Static scan: ${completeness.status} — ${result.scannedFiles.length} files, ${ranked.length} candidates, ${result.skipped.length} skipped`,
-    `Queue: ${findings.length} shown from ${queue.length}${options.representatives ? " rule-family representatives" : " ranked candidates"}; offset ${offset}${reportOnlyOmitted ? `; ${reportOnlyOmitted} report-only candidate(s) omitted (${[...reportOnly].join(", ")})` : ""}`,
+    `Queue: ${findings.length} shown from ${queue.length}${options.representatives ? " rule-family representatives" : " ranked candidates"}; offset ${offset}${alreadyAdjudicated ? `; ${alreadyAdjudicated} already adjudicated for this scan` : ""}${reportOnlyOmitted ? `; ${reportOnlyOmitted} report-only candidate(s) omitted (${[...reportOnly].join(", ")})` : ""}`,
     ...findings.map((item) => `- ${item.finding.id} | priority ${item.score}/100 | ${item.finding.ruleId} | ${item.finding.filePath}:${item.finding.line}:${item.finding.column}\n  ${item.finding.message}`),
   ];
   if (offset + findings.length < queue.length) lines.push(`Next offset: ${offset + findings.length}`);
@@ -164,6 +175,7 @@ export function createFindingQueue(
     offset,
     representatives: Boolean(options.representatives),
     reportOnlyOmitted,
+    alreadyAdjudicated,
     findings,
   };
 }

@@ -31,6 +31,8 @@ Patch proposals record exact pre-validation hashes. Real application requires an
 
 Remote critics are opt-in and receive evidence summaries—not source bodies. Non-abstaining responses must cite existing deterministic evidence IDs. Critic agreement is not proof and cannot authorize action.
 
+Blind end-to-end evaluation keeps labels outside the model-visible fixture tree. Fixture copying rejects symlinks, hard links, special files, and configured size/count overflows, then revalidates the source and copied workspace before invoking an adapter.
+
 ## Dependency provenance
 
 Registry queries use fixed HTTPS npm, PyPI, and OpenSSF endpoints, bounded responses, redirects disabled, and explicit allowlisting. Provenance evidence never triggers package installation.

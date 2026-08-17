@@ -45,6 +45,11 @@ for (const tool of requiredReviewTools) {
 for (const retired of ["slop_record_verdicts", "slop_verify_verdicts"]) {
   if (skill.includes(`\`${retired}\``)) fail(`skill still requires retired tool ${retired}`);
 }
+for (const recoveryOption of ["resumePending", "unreviewedOnly"]) {
+  if (!skill.includes(`\`${recoveryOption}`)) fail(`skill is missing checkpoint recovery option ${recoveryOption}`);
+  if (!extensionSource.includes(recoveryOption)) fail(`extension is missing checkpoint recovery option ${recoveryOption}`);
+}
+if (!readme.includes("disabled by default")) fail("README must state that slop_intent forensics are disabled by default");
 console.log(`version: ${version} (package.json, shrinkwrap, README tag consistent)`);
 
 // 3. Full validation gate (typecheck + compile + tests + evaluation + audit).

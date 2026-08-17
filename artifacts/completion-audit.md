@@ -1,6 +1,6 @@
-# Pi AI-Slop Review v1 completion audit
+# Pi AI-Slop Review v2.0.1 completion audit
 
-Updated: 2026-08-04T08:14:39Z
+Updated: 2026-08-17
 
 ## Scope and conclusion
 

@@ -8,7 +8,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG, loadConfig, redactConfig } from "../src/core/config.ts";
 import { diffScans } from "../src/core/ledger.ts";
 import { changedSinceAudit, changedSinceHead, discoverRepositoryFiles } from "../src/core/discovery.ts";
-import { createScanResult, isScanResult, sha256 } from "../src/core/schema.ts";
+import { createScanResult, currentScanContentHash, isScanResult, sha256 } from "../src/core/schema.ts";
 import { StateStore } from "../src/core/store.ts";
 import { diagnose, redactSensitive } from "../src/diagnostics.ts";
 import { toMarkdown, toSarif, writeExport } from "../src/export.ts";
@@ -45,6 +45,19 @@ function finding(): FindingDraft {
 
 test("repository audits default to a 10,000-file ceiling", () => {
   assert.equal(DEFAULT_CONFIG.limits.maxFiles, 10_000);
+});
+
+test("current scan hashes detect edits and deleted source", () => {
+  const root = fixture();
+  const result = createScanResult({
+    engine: "provider-federation", engineVersion: "1", rootDir: root,
+    providerId: "test", providerVersion: "1", scannedFiles: ["input.ts"], findings: [], skipped: [],
+  });
+  assert.equal(currentScanContentHash(root, result.scannedFiles), result.scope.contentHash);
+  writeFileSync(path.join(root, "input.ts"), "const value = 2;\n");
+  assert.notEqual(currentScanContentHash(root, result.scannedFiles), result.scope.contentHash);
+  rmSync(path.join(root, "input.ts"));
+  assert.notEqual(currentScanContentHash(root, result.scannedFiles), result.scope.contentHash);
 });
 
 test("delta discovery returns only changed source files and excludes deletions", () => {

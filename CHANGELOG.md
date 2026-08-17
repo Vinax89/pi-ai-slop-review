@@ -22,6 +22,11 @@
 - Prevent unsubmitted adjudication batches from being overwritten and return canonical batch/representative/report-only coverage metadata.
 - Avoid placeholder false positives from shadowed JavaScript error constructors and Python `NotImplementedError` bindings.
 - Let published-package users run blind evaluation with external fixture and label paths while keeping private evaluation data out of npm.
+- Reject stale scans before adjudication, redisplay pending batches after context compaction, and resume interrupted full reviews from exact-scan persisted coverage.
+- Distinguish graph-context query failure from an empty graph in verdict fingerprints.
+- Reject hard-linked blind fixtures, revalidate copied workspaces, constrain label schemas, and require strict first-occurrence tool order.
+- Add release-corpus hard negatives for project-shadowed placeholder exception constructors.
+- Correct stale documentation about opt-in forensics, reusable verdict semantics, and the current completion-audit release.
 
 ## 2.0.1
 

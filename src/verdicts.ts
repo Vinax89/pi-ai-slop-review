@@ -31,6 +31,7 @@ const VERDICTS = new Set<Verdict>(["confirmed", "dismissed", "needs-context"]);
 const MAX_VERDICT_BATCH = 20;
 const MAX_EVIDENCE_IDS = 50;
 const MAX_RATIONALE_LENGTH = 2_000;
+type FingerprintContext = ReturnType<typeof queryContext> & { unavailable?: true };
 
 function normalizedRationale(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
@@ -48,7 +49,7 @@ export function adjudicationContextFingerprint(
   rootDir: string,
   scan: ScanResult,
   finding: Finding,
-  contextCache = new Map<string, ReturnType<typeof queryContext>>(),
+  contextCache = new Map<string, FingerprintContext>(),
 ): string {
   const linked = new Set([...finding.evidenceIds, ...finding.counterEvidenceIds]);
   const evidence = scan.evidenceRecords.filter((record) =>
@@ -62,7 +63,7 @@ export function adjudicationContextFingerprint(
       contextCache.set(query, context);
       return context;
     } catch {
-      const context = { query, nodes: [], impacts: [], publicSurface: [] };
+      const context: FingerprintContext = { query, nodes: [], impacts: [], publicSurface: [], unavailable: true };
       contextCache.set(query, context);
       return context;
     }
@@ -89,17 +90,17 @@ export function adjudicationContextFingerprint(
 export function recordVerdicts(rootDir: string, scan: ScanResult, entries: VerdictEntry[], stateRoot?: string): number {
   if (!Array.isArray(entries)) throw new Error("verdict entries must be an array");
   if (entries.length < 1 || entries.length > MAX_VERDICT_BATCH) throw new Error(`verdict batch must contain 1 to ${MAX_VERDICT_BATCH} entries`);
+  if (entries.some((entry) => !entry || typeof entry !== "object" || typeof entry.findingId !== "string" || !entry.findingId || entry.findingId.length > 200)) {
+    throw new Error("verdict findingId must be a non-empty string of at most 200 characters");
+  }
   const submittedIds = entries.map((entry) => entry.findingId);
   if (new Set(submittedIds).size !== submittedIds.length) throw new Error("verdict batch contains duplicate finding IDs");
   const store = new StateStore(rootDir, stateRoot);
   const byId = new Map(scan.findings.map((finding) => [finding.id, finding]));
   const now = new Date().toISOString();
   const records: VerdictRecord[] = [];
-  const contextCache = new Map<string, ReturnType<typeof queryContext>>();
+  const contextCache = new Map<string, FingerprintContext>();
   for (const entry of entries) {
-    if (!entry || typeof entry !== "object" || typeof entry.findingId !== "string" || !entry.findingId || entry.findingId.length > 200) {
-      throw new Error("verdict findingId must be a non-empty string of at most 200 characters");
-    }
     if (!VERDICTS.has(entry.verdict)) throw new Error(`verdict must be confirmed, dismissed, or needs-context`);
     const finding = byId.get(entry.findingId);
     if (!finding) throw new Error(`verdict references finding '${entry.findingId}' which is not in the latest review`);
@@ -159,7 +160,7 @@ export function verdictLedger(rootDir: string, stateRoot?: string): VerdictRecor
 export function classifyVerdicts(rootDir: string, scan: ScanResult, ledger: VerdictRecord[]): VerdictDelta {
   const findings = scan.findings;
   const byId = new Map(ledger.map((record) => [record.findingId, record]));
-  const contextCache = new Map<string, ReturnType<typeof queryContext>>();
+  const contextCache = new Map<string, FingerprintContext>();
   const present = new Set<string>();
   const classified = findings.map((finding) => {
     present.add(finding.id);

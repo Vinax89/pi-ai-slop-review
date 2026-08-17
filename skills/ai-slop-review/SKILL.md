@@ -28,7 +28,7 @@ Explicit paths take precedence over the requested scope. If no session files are
 
 1. Run `slop_review`. Record scan status, files scanned, skipped items, and candidate count.
 2. Stop on `abstained`. On `partial`, continue only with available evidence and label every conclusion partial.
-3. Get one bounded review batch with `slop_findings` (at most 20). The returned batch is already the expected transactional adjudication set; do not refetch it. For repository scope without `full`, you MUST use `representatives: true` and adjudicate only those representatives. For session or explicit scope without `full`, adjudicate at most 20 ranked findings. Report-only families are omitted by default; request `includeReportOnly` only for `full` or explicit coverage-signal review.
+3. Get one bounded review batch with `slop_findings` (at most 20). The returned batch is already the expected transactional adjudication set; do not issue another ordinary page request before submitting it. If context compaction hid an unsubmitted batch, recover that exact batch with `resumePending: true`. For repository scope without `full`, you MUST use `representatives: true` and adjudicate only those representatives. For session or explicit scope without `full`, adjudicate at most 20 ranked findings. Report-only families are omitted by default; request `includeReportOnly` only for `full` or explicit coverage-signal review.
 4. Check the verdict ledger with `slop_verdicts`:
    - `new` — adjudicate normally.
    - `reusable` — the source and complete adjudication-context fingerprint are unchanged; verify briefly and carry forward.
@@ -54,7 +54,7 @@ Explicit paths take precedence over the requested scope. If no session files are
    Every adjudicated finding ID appears in exactly one verdict line. Never merge findings that share a location into one line, and never emit a verdict without its ID.
 7. Submit the complete current batch with `slop_submit_verdicts({scanId, entries})`. It validates the exact expected IDs, derives rule/location canonically, and commits the batch atomically. Fix any rejection before continuing.
    Evidence IDs are finding-scoped. Cite only scan evidence IDs returned for that finding by `slop_findings`; use `rationale` to describe additional repository context from `slop_context`. Never reuse an evidence ID from another candidate, even when the candidates share a file or rule.
-8. For `full`, repeat steps 3–7 with the next offset in batches of at most 20. Each successful submission is a durable checkpoint, so continue from persisted coverage after context compaction or interruption.
+8. For `full`, repeat steps 3–7 with the next offset in batches of at most 20. Each successful submission is a durable checkpoint. After a process interruption, run `slop_review` again so source freshness is re-established, then call `slop_findings` with `unreviewedOnly: true` and offset 0 to continue from verdicts persisted for that exact scan. If the new scan ID differs, adjudicate it as a new/context-changed scan instead of carrying checkpoint counts forward.
 9. Report deterministic scan coverage separately from model adjudication coverage, using the canonical checkpoint totals returned by `slop_submit_verdicts`.
 
 ## Falsification checks

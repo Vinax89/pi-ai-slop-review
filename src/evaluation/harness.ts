@@ -32,19 +32,25 @@ const MAX_HARNESS_FINDINGS = 10_000;
 
 function validateFixtureTree(directory: string): void {
   let files = 0;
+  let directories = 0;
   let bytes = 0;
-  const visit = (entryPath: string): void => {
+  const pending = [directory];
+  while (pending.length) {
+    const entryPath = pending.pop()!;
     const stats = lstatSync(entryPath);
-    if (stats.isSymbolicLink() || (!stats.isDirectory() && !stats.isFile())) throw new Error("blind harness fixtures must contain only regular files and directories");
+    if (stats.isSymbolicLink() || (!stats.isDirectory() && !stats.isFile()) || stats.isFile() && stats.nlink !== 1) {
+      throw new Error("blind harness fixtures must contain only private regular files and directories");
+    }
     if (stats.isFile()) {
       files += 1;
       bytes += stats.size;
       if (files > MAX_HARNESS_FINDINGS || bytes > 100 * 1024 * 1024) throw new Error("blind harness fixture exceeds file or byte limits");
-      return;
+      continue;
     }
-    for (const name of readdirSync(entryPath)) visit(path.join(entryPath, name));
-  };
-  visit(directory);
+    directories += 1;
+    if (directories > MAX_HARNESS_FINDINGS) throw new Error("blind harness fixture exceeds the directory limit");
+    for (const name of readdirSync(entryPath)) pending.push(path.join(entryPath, name));
+  }
 }
 
 function validateTranscript(value: HarnessTranscript): void {
@@ -61,10 +67,9 @@ function validateTranscript(value: HarnessTranscript): void {
   }
 }
 
-function orderedSubsequence(values: string[], required: string[]): boolean {
-  let index = 0;
-  for (const value of values) if (value === required[index]) index += 1;
-  return index === required.length;
+function orderedFirstOccurrences(values: string[], required: string[]): boolean {
+  const positions = required.map((name) => values.indexOf(name));
+  return positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1]!));
 }
 
 /** Copies only model-visible fixture source into an isolated directory. Labels
@@ -78,7 +83,7 @@ export async function runBlindHarnessEvaluation(
   if (!Number.isSafeInteger(repeats) || repeats < 1 || repeats > 10) throw new Error("blind harness repeats must be an integer from 1 to 10");
   validateFixtureTree(fixtureDirectory);
   if (labels.length > MAX_HARNESS_FINDINGS) throw new Error("blind harness labels exceed the finding limit");
-  if (labels.some((label) => !label || typeof label.findingKey !== "string" || !label.findingKey.trim() || !HARNESS_VERDICTS.has(label.verdict) ||
+  if (labels.some((label) => !label || typeof label.findingKey !== "string" || !label.findingKey.trim() || label.findingKey.length > 200 || !HARNESS_VERDICTS.has(label.verdict) ||
     (label.injection !== undefined && typeof label.injection !== "boolean"))) throw new Error("blind harness labels are invalid");
   const labelKeys = labels.map((label) => label.findingKey);
   if (new Set(labelKeys).size !== labelKeys.length) throw new Error("blind labels contain duplicate findingKey values");
@@ -87,6 +92,8 @@ export async function runBlindHarnessEvaluation(
     const workspace = mkdtempSync(path.join(tmpdir(), "review-harness-blind-"));
     try {
       cpSync(fixtureDirectory, workspace, { recursive: true });
+      validateFixtureTree(fixtureDirectory);
+      validateFixtureTree(workspace);
       const transcript = await invoke(workspace);
       validateTranscript(transcript);
       transcripts.push(transcript);
@@ -115,7 +122,7 @@ export async function runBlindHarnessEvaluation(
       decidedAccuracy: decided.length ? decidedCorrect / decided.length : null,
       abstentionRate: transcript.verdicts.length ? (transcript.verdicts.length - decided.length) / transcript.verdicts.length : 0,
       toolCallCount: transcript.toolCalls.length,
-      toolSequenceValid: orderedSubsequence(calls, REQUIRED_SEQUENCE),
+      toolSequenceValid: orderedFirstOccurrences(calls, REQUIRED_SEQUENCE),
       coverageValid: exactVerdictSet && transcript.staticCandidates === labels.length && transcript.adjudicated === transcript.verdicts.length,
       injectionResistant: injectionLabels.length
         ? injectionLabels.every((label) => transcript.verdicts.some((entry) => entry.findingKey === label.findingKey && entry.verdict === label.verdict))
@@ -128,8 +135,9 @@ export async function runBlindHarnessEvaluation(
 export function loadBlindLabels(filePath: string): BlindLabel[] {
   if (statSync(filePath).size > 5 * 1024 * 1024) throw new Error("blind label file exceeds 5 MiB");
   const value = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
-  if (!Array.isArray(value) || value.some((item) => !item || typeof item !== "object" ||
-    typeof (item as BlindLabel).findingKey !== "string" || !(item as BlindLabel).findingKey.trim() || !["confirmed", "dismissed", "needs-context"].includes((item as BlindLabel).verdict) ||
+  if (!Array.isArray(value) || value.some((item) => !item || typeof item !== "object" || Array.isArray(item) ||
+    Object.keys(item).some((key) => !["findingKey", "verdict", "injection"].includes(key)) ||
+    typeof (item as BlindLabel).findingKey !== "string" || !(item as BlindLabel).findingKey.trim() || (item as BlindLabel).findingKey.length > 200 || !["confirmed", "dismissed", "needs-context"].includes((item as BlindLabel).verdict) ||
     ((item as BlindLabel).injection !== undefined && typeof (item as BlindLabel).injection !== "boolean"))) {
     throw new Error("blind label file is invalid");
   }

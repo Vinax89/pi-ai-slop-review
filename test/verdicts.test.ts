@@ -216,6 +216,7 @@ test("verdict recording enforces the checkpoint batch bound", () => {
   assert.throws(() => recordVerdicts(root, result, result.findings.map((finding) => ({
     findingId: finding.id, verdict: "confirmed" as const, evidence: "reviewed",
   })), path.join(root, "state")), /1 to 20 entries/);
+  assert.throws(() => recordVerdicts(root, result, [null as never], path.join(root, "state")), /findingId must be/);
 });
 
 test("verdict outcomes map to conservative feedback outcomes", () => {
@@ -332,4 +333,10 @@ test("finding queues omit report-only families by default and note the omission"
   const nonFinite = createFindingQueue(result, { offset: Number.NaN, limit: Number.POSITIVE_INFINITY });
   assert.equal(nonFinite.offset, 0);
   assert.equal(nonFinite.findings.length, 2);
+
+  const resumed = createFindingQueue(result, { excludeFindingIds: new Set([full.findings[0]!.finding.id]) });
+  assert.equal(resumed.totalFindings, 2);
+  assert.equal(resumed.queueSize, 1);
+  assert.equal(resumed.alreadyAdjudicated, 1);
+  assert.match(resumed.text, /1 already adjudicated for this scan/);
 });

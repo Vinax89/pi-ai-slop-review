@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-17T08:49:53.496Z",
+  "generatedAt": "2026-08-17T09:01:13.778Z",
   "runtime": {
     "node": "v24.19.0",
     "nodeVersions": {
@@ -35,7 +35,7 @@
     },
     "python": {
       "executable": "python3",
-      "version": "Python 3.11.2"
+      "version": "Python 3.14.7"
     },
     "platform": "linux",
     "arch": "x64"
@@ -47,22 +47,22 @@
     "graphResults": 1
   },
   "measurements": {
-    "coldScanMs": 651.68,
-    "recycledColdScanMs": 501.81,
-    "changedFileScanMs": 356.9,
-    "warmScanP50Ms": 1.71,
+    "coldScanMs": 540.16,
+    "recycledColdScanMs": 512.2,
+    "changedFileScanMs": 347.05,
+    "warmScanP50Ms": 1.7,
     "warmScanP95Ms": 2.13,
     "warmCacheHitRate": 1,
-    "warmWorkerCpuP50Ms": 1.85,
-    "coldWorkerHeapUsedMiB": 20.18,
-    "coldWorkerRssMiB": 216.53,
-    "largeAuditMs": 2468.27,
-    "largeWarmScanMs": 41.78,
-    "graphQueryMs": 0.8,
-    "rssHighWaterDeltaMiB": 15.82,
-    "heapUsedDeltaMiB": 4.93,
+    "warmWorkerCpuP50Ms": 1.76,
+    "coldWorkerHeapUsedMiB": 20.22,
+    "coldWorkerRssMiB": 218.73,
+    "largeAuditMs": 2272.62,
+    "largeWarmScanMs": 39.87,
+    "graphQueryMs": 0.73,
+    "rssHighWaterDeltaMiB": 14.34,
+    "heapUsedDeltaMiB": 5.05,
     "cancellationContained": true,
-    "activeProviderCancellationMs": 36.6,
+    "activeProviderCancellationMs": 37.02,
     "workerOomContained": true
   },
   "targets": {
@@ -82,13 +82,13 @@
     "note": "Targets are directional and never override deterministic findings, completeness, or containment."
   },
   "hashes": {
-    "code": "77bcde12dda3f68d0f63185c59a2cb1721f9c2f2eb879f0c9af70824d78031ad",
-    "corpus": "85f0da3a67e389b44b3ee02ba8aa74ecfa6001e030cdae3ec132c7f3e14b8a7b",
+    "code": "33d1bf5df079b2e4bf10364f437e9cd82cda99bbec53adb817cd88576c6ac09f",
+    "corpus": "d5fe7caf51ea1b8ad099dd8fa3bcc9cfcc7a7e32482b3b42602861276e5ba0e1",
     "rules": "15a6089fe836de22bdc842378279f2413ce6b940ebed3bdb814fd81668e4f3e3",
-    "library": "a7cb3f688e47ecf3aa7d80ea6c8be77e48dd81f9ba6df989c1806bd98212170f",
+    "library": "43f46f6b20e6b9934655086640eec7fd7b90e131dfc5c91d09f2ee879575ca0a",
     "schema": "0e4028c5de643e430e3bb8634b38f0bd5a1eefb87460f3a7ffb97d404939bf01",
     "package": "97628fbea9f8d8c27ecacb3562f289570b4f7371177bf81c5333ba734b6bfabd",
     "config": "f40bf8dfca68c87616330a3fe8265a85b7aa9637f03c9b8a1785e92e4fe8e9f5",
-    "runtime": "81aaf46a3b933c8aa60c59d049df8955be73a4560fb32b93f1022f1a7522cb31"
+    "runtime": "38bf291c23b6336ab253613d8093b51c5ad5805ba9bcc73fd5a27212a94fdb86"
   }
 }

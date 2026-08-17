@@ -38,6 +38,17 @@ export function contentHashOnce(filePath: string, content?: string | Buffer): st
   return hash;
 }
 
+/** Recompute the content portion of a scan scope from the files as they exist
+ * now. Callers can use this before a state-changing operation to reject a
+ * restored or long-lived scan whose observed source has gone stale. */
+export function currentScanContentHash(rootDir: string, filePaths: readonly string[]): string {
+  const scannedFiles = [...new Set(filePaths.map((filePath) => canonicalFilePath(rootDir, filePath)))].sort();
+  const sourceHashes = Object.fromEntries(
+    scannedFiles.map((filePath) => [filePath, fileContentHash(rootDir, filePath)]),
+  );
+  return sha256(canonicalJson({ scannedFiles, sourceHashes }));
+}
+
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);

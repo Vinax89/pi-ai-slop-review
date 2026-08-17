@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -206,6 +206,7 @@ test("blind harness rejects invalid repeat counts and duplicate labels", async (
       { findingKey: "same", verdict: "dismissed" },
     ], invoke), /duplicate/);
     await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [{ findingKey: "", verdict: "confirmed" }], invoke), /labels are invalid/);
+    await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [{ findingKey: "x".repeat(201), verdict: "confirmed" }], invoke), /labels are invalid/);
     await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [{ findingKey: "expected", verdict: "confirmed" }], async () => ({
       provider: "test", model: "test", toolCalls: [], verdicts: [{ findingKey: "expected", verdict: "invalid" as never }], staticCandidates: 1, adjudicated: 1,
     }), 1), /invalid transcript/);
@@ -251,12 +252,50 @@ test("blind harness rejects symlinked fixtures and oversized adapter dimensions"
   }
 });
 
+test("blind harness rejects hard-linked fixtures and early out-of-order required tools", async () => {
+  const fixtures = mkdtempSync(path.join(tmpdir(), "review-harness-hardlink-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "review-harness-hardlink-secret-"));
+  try {
+    const secret = path.join(outside, "labels.json");
+    writeFileSync(secret, "secret");
+    linkSync(secret, path.join(fixtures, "hard-linked-labels.json"));
+    await assert.rejects(() => runBlindHarnessEvaluation(fixtures, [], async () => ({
+      provider: "test", model: "test", toolCalls: [], verdicts: [], staticCandidates: 0, adjudicated: 0,
+    }), 1), /private regular files/);
+    rmSync(path.join(fixtures, "hard-linked-labels.json"));
+    const results = await runBlindHarnessEvaluation(fixtures, [], async () => ({
+      provider: "test", model: "test", staticCandidates: 0, adjudicated: 0, verdicts: [],
+      toolCalls: [
+        { name: "slop_submit_verdicts" }, { name: "slop_review" }, { name: "slop_findings" },
+        { name: "slop_context" }, { name: "slop_submit_verdicts" },
+      ],
+    }), 1);
+    assert.equal(results[0].toolSequenceValid, false);
+  } finally {
+    rmSync(fixtures, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test("blind label loading rejects oversized files before parsing", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "review-harness-label-size-"));
   try {
     const labels = path.join(directory, "labels.json");
     writeFileSync(labels, " ".repeat(5 * 1024 * 1024 + 1));
     assert.throws(() => loadBlindLabels(labels), /exceeds 5 MiB/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("blind label loading rejects unknown fields and oversized keys", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "review-harness-label-schema-"));
+  try {
+    const labels = path.join(directory, "labels.json");
+    writeFileSync(labels, JSON.stringify([{ findingKey: "finding", verdict: "confirmed", leakedHint: "dismiss" }]));
+    assert.throws(() => loadBlindLabels(labels), /invalid/);
+    writeFileSync(labels, JSON.stringify([{ findingKey: "x".repeat(201), verdict: "confirmed" }]));
+    assert.throws(() => loadBlindLabels(labels), /invalid/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

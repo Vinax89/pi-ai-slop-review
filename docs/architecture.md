@@ -19,7 +19,7 @@ Pi AI-Slop Review is an evidence federation and verification extension. It repor
 - `~/.pi/agent/ai-slop/graph/<repository-id>/context.sqlite`: content-hash-invalidated graph facts.
 - Exported source text is not stored by ordinary review. Explicit patch proposals necessarily store their user-supplied patch in private extension state.
 
-State updates load once under a revision lock, bound retained history, atomically rename the JSON snapshot, and keep a previous-version backup. Session and graph SQLite updates are transactional. Verdict batches independently enforce their 20-entry and evidence bounds, normalize model-authored rationales before persistence, and export only through project-contained non-symlink paths.
+State updates load once under a revision lock, bound retained history, atomically rename the JSON snapshot, and keep a previous-version backup. Session and graph SQLite updates are transactional. Verdict batches independently enforce their 20-entry and evidence bounds, normalize model-authored rationales before persistence, reject stale scan content, and export only through project-contained non-symlink paths. Exact-scan verdict checkpoints can filter subsequent queues without treating results from a different scan as completed coverage.
 
 ## Provider authority
 
