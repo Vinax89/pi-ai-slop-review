@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1
+
+- Require positive evidence or complete reference coverage before confirming wrapper redundancy.
+- Require positive maintenance-risk evidence before confirming exact duplicate implementations.
+- Recognize workspace and whole-project aliases for repository review.
+- Clarify that evidence IDs are finding-scoped and live-provider metrics are experimental.
+- Correct two blind labels that had inferred redundancy from missing caller or contract evidence.
+
 ## 2.0.0
 
 - Invalidate stored verdicts with a full adjudication-context fingerprint rather than source hash alone.

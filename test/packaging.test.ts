@@ -19,6 +19,16 @@ function packedFiles(): string[] {
   return firstPackResult(output)?.files?.map((item) => item.path) ?? [];
 }
 
+test("skill keeps conservative evidence policy and explicit repository aliases", () => {
+  const skill = readFileSync(new URL("../skills/ai-slop-review/SKILL.md", import.meta.url), "utf8");
+  assert.match(skill, /workspace.*whole project.*full repository.*full workspace/);
+  assert.match(skill, /identity wrapper only when reference coverage is complete or independent positive evidence/);
+  assert.match(skill, /Matching signatures and bodies establish duplication, not by themselves a maintenance problem/);
+  assert.match(skill, /Evidence IDs are finding-scoped/);
+  assert.match(skill, /Missing static edges are not proof of no callers/);
+  assert.doesNotMatch(skill, /Confirm an unexported identity wrapper with no discovered callers/);
+});
+
 test("npm pack contains runtime, schema, documentation, and metadata artifacts", () => {
   const files = packedFiles();
   for (const required of ["dist/src/isolated-scan.js", "dist/src/python_common.py", "index.ts", "skills/ai-slop-review/SKILL.md", "src/evaluation/corpus.ts", "src/evaluation/artifacts.ts", "schema/config.schema.json", "schema/scan-result.schema.json", "README.md", "docs/operations.md"]) {

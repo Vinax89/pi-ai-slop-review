@@ -310,6 +310,10 @@ async function runIsolated(
   const failedWorker = session;
   if (failedWorker) await stopWorker(failedWorker);
   else await stopping;
+  // Node 22 can report termination before all worker lifecycle callbacks have
+  // drained. Start the retry on the next event-loop turn so it cannot inherit
+  // or race the failed transport's exit state.
+  await new Promise<void>((resolve) => setImmediate(resolve));
   const second = await runAttempt(request, signal, runtime);
   return second.kind === "success" ? second.result : failedScan(request);
 }
